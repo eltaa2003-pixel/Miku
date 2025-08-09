@@ -1,0 +1,17 @@
+{
+  "build": {
+    "env": {
+      "NODE_ENV": "production"
+    }
+  },
+  "deploy": {
+    "startCommand": "node index.js"
+  },
+  "plugins": [
+    {
+      "name": "Custom Database",
+      "serviceType": "database"
+    }
+  ],
+  "serviceType": "database"
+} 
