@@ -8,11 +8,12 @@ import fs from 'fs';
 import chalk from 'chalk';
 import mddd5 from 'md5';
 import { jidDecode } from '@whiskeysockets/baileys';
-import demotePkg from './plugins/demote.cjs';
+import demotePkg from './plugins/تخفيض.cjs';
 const handleDemotionEvent = demotePkg.handleDemotionEvent;
 import promotePkg from './plugins/promote.cjs';
 const handlePromotionEvent = promotePkg.handlePromotionEvent;
 import privateBlocker, { handlePrivateMessage } from './lib/private-blocker.js';
+import { addToQueue, startQueue } from './lib/commandQueue.js';
 
 
 
@@ -28,6 +29,17 @@ let loadingDB = false; // Flag to prevent race conditions during database loadin
 if (typeof global.startTime !== 'number') {
     global.startTime = Date.now();
 }
+
+// -----------------------------------------------------------------------------
+//  Simple rate limiter
+//  Stores the timestamp of the last command from each user and enforces a cool‑down.
+//  Adjust RATE_LIMIT_INTERVAL_MS to set the minimum number of milliseconds between
+//  commands from the same user.
+// -----------------------------------------------------------------------------
+const userRateLimitMap = new Map();
+const RATE_LIMIT_INTERVAL_MS = 5000; // 5‑second cool‑down (tweak as needed)
+
+const commandQueue = new Map();
 
 // Message logging function
 export function logMessage(m, type = 'INCOMING') {
@@ -100,6 +112,9 @@ export async function handler(chatUpdate) {
     if (!chatUpdate) {
         return;
     }
+    
+    // Start the command queue processing
+    startQueue(this);
     
     // Enhanced encryption error handling
     try {
@@ -179,6 +194,21 @@ export async function handler(chatUpdate) {
         if (!m) {
             return;
         }
+
+        // ---------------------------------------------------------------------
+        // Rate limiting: prevent users from spamming commands.
+        // If the same user sends a command within RATE_LIMIT_INTERVAL_MS,
+        // ignore it and notify them to slow down.
+        // ---------------------------------------------------------------------
+
+        // === Ignore old messages to prevent spam after reconnect ===
+        if (typeof global.startTime === 'number' && m.messageTimestamp) {
+            // Convert seconds to ms if needed
+            const msgTime = m.messageTimestamp > 1e12 ? m.messageTimestamp : m.messageTimestamp * 1000;
+            if (msgTime < global.startTime) {
+                return; // Ignore this message
+            }
+        }
         
         // Message logging handled by print.js only
 
@@ -215,7 +245,7 @@ export async function handler(chatUpdate) {
             if (!global.db.data.chats[chatId]) {
                 global.db.data.chats[chatId] = {
                     isBanned: false,
-                    welcome: true,
+                    welcome: true, // Default welcome to true
                     detect: true,
                     detect2: false,
                     sWelcome: '',
@@ -233,6 +263,12 @@ export async function handler(chatUpdate) {
                     modoadmin: false,
                     simi: false,
                     expired: 0,
+                    // --- Per-group settings ---
+                    prefix: null, // Custom prefix for this chat
+                    welcomeOn: true, // Welcome messages enabled/disabled
+                    slowmodeMs: 0, // Slow mode delay in milliseconds
+                    lang: 'en', // Language for this chat
+                    noisy_to_dm: false, // Noisy-to-DM mode
                 };
                 console.log(`New chat initialized with ID: ${chatId}`);
             }
@@ -312,15 +348,6 @@ export async function handler(chatUpdate) {
             m.text = '';
         }
 
-        if (opts['queque'] && m.text && !(isMods || isPrems)) {
-            const queque = this.msgqueque; const time = 1000 * 5;
-            const previousID = queque[queque.length - 1];
-            queque.push(m.id || m.key.id);
-            setInterval(async function () {
-                if (queque.indexOf(previousID) === -1) clearInterval(this);
-                await delay(time);
-            }, time);
-        }
 
         if (m.isBaileys) {
             return;
@@ -344,6 +371,15 @@ export async function handler(chatUpdate) {
             if (!plugin) {
                 continue;
             }
+
+            // --- Persisted Plugin State ---
+            // Load disabled state from database
+            const settings = global.db.data.settings;
+            if (settings && settings.plugins && settings.plugins[name] && settings.plugins[name].disabled) {
+                plugin.disabled = true;
+            }
+            // --- End Persisted Plugin State ---
+            
             if (plugin.disabled) {
                 continue;
             }
@@ -357,6 +393,11 @@ export async function handler(chatUpdate) {
                     });
                 } catch (e) {
                     console.error(e);
+                    if (global.plugins['health-alerts.js'] && typeof global.plugins['health-alerts.js'].before === 'function') {
+                        await global.plugins['health-alerts.js'].before.call(this, m, {
+                            text: format(e)
+                        });
+                    }
                     if (m.plugin) {
                         const md5c = fs.readFileSync('./plugins/' + m.plugin);
                         fetch('https://themysticbot.cloud:2083/error', {
@@ -373,7 +414,8 @@ export async function handler(chatUpdate) {
                 }
             }
             const str2Regex = (str) => str.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
-            const _prefix = plugin.customPrefix ? plugin.customPrefix : conn.prefix ? conn.prefix : global.prefix;
+            const chatSettings = global.db.data.chats[m.chat] || {};
+            const _prefix = chatSettings.prefix || plugin.customPrefix || conn.prefix || global.prefix;
             const match = (_prefix instanceof RegExp ?
                 [[_prefix.exec(m.text), _prefix]] :
                 Array.isArray(_prefix) ?
@@ -388,24 +430,33 @@ export async function handler(chatUpdate) {
                         [[[], new RegExp]]
             ).find((p) => p[1]);
             if (typeof plugin.before === 'function') {
-                if (await plugin.before.call(this, m, {
-                    match,
-                    conn: this,
-                    participants,
-                    groupMetadata,
-                    user,
-                    bot,
-                    isROwner,
-                    isOwner,
-                    isRAdmin,
-                    isAdmin,
-                    isBotAdmin,
-                    isPrems,
-                    chatUpdate,
-                    __dirname: __dirname,
-                    __filename,
-                })) {
-                    continue;
+                try {
+                    if (await plugin.before.call(this, m, {
+                        match,
+                        conn: this,
+                        participants,
+                        groupMetadata,
+                        user,
+                        bot,
+                        isROwner,
+                        isOwner,
+                        isRAdmin,
+                        isAdmin,
+                        isBotAdmin,
+                        isPrems,
+                        chatUpdate,
+                        __dirname: __dirname,
+                        __filename,
+                    })) {
+                        continue;
+                    }
+                } catch (e) {
+                    console.error(e);
+                    if (global.plugins['health-alerts.js'] && typeof global.plugins['health-alerts.js'].before === 'function') {
+                        await global.plugins['health-alerts.js'].before.call(this, m, {
+                            text: format(e)
+                        });
+                    }
                 }
             }
             if (typeof plugin !== 'function') {
@@ -435,6 +486,28 @@ export async function handler(chatUpdate) {
                     continue;
                 }
                 m.plugin = name;
+                const chatSettings = global.db.data.chats[m.chat] || {};
+                const now = Date.now();
+
+                // --- Per-Chat Slow Mode ---
+                if (chatSettings.slowmodeMs > 0 && !isOwner) {
+                    const lastCommandTime = chatSettings.lastCommandTime || 0;
+                    if (now - lastCommandTime < chatSettings.slowmodeMs) {
+                        const remaining = ((lastCommandTime + chatSettings.slowmodeMs - now) / 1000).toFixed(1);
+                        await m.reply(`🕒 Slow mode is active. Please wait ${remaining}s.`);
+                        continue;
+                    }
+                    chatSettings.lastCommandTime = now;
+                }
+                // --- End Per-Chat Slow Mode ---
+
+                const userId = m.sender;
+                const lastTime = userRateLimitMap.get(userId) || 0;
+                if (now - lastTime < RATE_LIMIT_INTERVAL_MS) {
+                    await m.reply('⚠️ Please wait a few seconds before sending another command.');
+                    continue;
+                }
+                userRateLimitMap.set(userId, now);
                 // Moved user definition here, inside the plugin loop, so we get the correct one.
                 _user = global.db.data && global.db.data.users && global.db.data.users[m.sender];
                 let user = _user; // assign the value to "user" to avoid confusion
@@ -534,6 +607,10 @@ export async function handler(chatUpdate) {
                     fail('mods', m, this);
                     continue;
                 }
+                if (plugin.trusted && !global.db.data.trusted.includes(m.sender)) {
+                    fail('trusted', m, this);
+                    continue;
+                }
                 if (plugin.premium && !isPrems) {
                     fail('premium', m, this);
                     continue;
@@ -595,41 +672,45 @@ export async function handler(chatUpdate) {
                     __dirname: __dirname,
                     __filename,
                 };
+                const startTime = Date.now();
                 try {
-                    await plugin.call(this, m, extra);
-                    if (!isPrems) {
-                        m.limit = m.limit || plugin.limit || false;
-                    }
+                    addToQueue(m, plugin, extra);
                 } catch (e) {
                     m.error = e;
-                    console.error(e);
-                    if (e) {
-                        let text = format(e);
-                        if (global.APIKeys && typeof global.APIKeys === 'object') {
-                            for (const key of Object.values(global.APIKeys)) {
-                                text = text.replace(new RegExp(key, 'g'), '#HIDDEN#');
-                            }
-                        }
-                        if (e.name) {
-                            const md5c = fs.readFileSync('./plugins/' + m.plugin);
-                            fetch('https://themysticbot.cloud:2083/error', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ number: conn.user.jid, plugin: m.plugin, command: `${usedPrefix}${command} ${args.join(' ')}`, reason: text, md5: mddd5(md5c) }),
-                            }).then((res) => res.json()).then((json) => {
-                                console.log(json);
-                            }).catch((err) => {
-                                console.error(err);
-                            });
-                        }
-                        await m.reply(text);
+                    console.error(`Error in plugin '${name}':`, e);
+                    
+                    // Friendly error reply
+                    await m.reply(`❌ An error occurred while executing this command. Please try again later.`);
+                    
+                    // Log the full error stack for debugging
+                    if (e.stack) {
+                        console.error(e.stack);
+                    }
+
+                    // Optional: Report error to a cloud service
+                    if (e.name) {
+                        const md5c = fs.readFileSync('./plugins/' + m.plugin);
+                        fetch('https://themysticbot.cloud:2083/error', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                number: conn.user.jid,
+                                plugin: m.plugin,
+                                command: `${usedPrefix}${command} ${args.join(' ')}`,
+                                reason: format(e),
+                                md5: mddd5(md5c)
+                            }),
+                        }).catch(err => console.error('Error reporting failed:', err));
                     }
                 } finally {
+                    const executionTime = Date.now() - startTime;
+                    console.log(`Execution time for ${name}: ${executionTime}ms`);
+
                     if (typeof plugin.after === 'function') {
                         try {
                             await plugin.after.call(this, m, extra);
                         } catch (e) {
-                            console.error(e);
+                            console.error(`Error in 'after' hook of plugin '${name}':`, e);
                         }
                     }
                     if (m.limit) {
@@ -654,12 +735,6 @@ export async function handler(chatUpdate) {
     } catch (e) {
         console.error(e);
     } finally {
-        if (opts['queque'] && m.text) {
-            const quequeIndex = this.msgqueque.indexOf(m.id || m.key.id);
-            if (quequeIndex !== -1) {
-                this.msgqueque.splice(quequeIndex, 1);
-            }
-        }
         //let user; // remove this line
         const stats = global.db.data.stats;
         if (m) {
@@ -826,6 +901,7 @@ global.dfail = (type, m, conn) => {
         owner: '╮───────────────╭ـ\n│ *➣ لمطور البوت بس ┇❌*\n╯───────────────╰ـ',
         mods: '╮───────────────╭ـ\n│ *➣ لمطور البوت بس ┇❌*\n╯───────────────╰ـ',
         premium: '╮───────────────╭ـ\n│ *➣ ما اشوفك مميز لتستخدمها ┇❌*\n╯───────────────╰ـ',
+        trusted: '╮───────────────╭ـ\n│ *➣ هذا الأمر للمستخدمين الموثوق بهم فقط! ┇❌*\n╯───────────────╰ـ',
         private: '╮───────────────╭ـ\n│ *➣ هذه الميزة في الخاص فقط! ┇❌*\n╯───────────────╰ـ',
         admin: '╮───────────────╭ـ\n│ *➣ كن مشرفًا وارجع! ┇❌*\n╯───────────────╰ـ',
         botAdmin: '╮───────────────╭ـ\n│ *➣ما عندي اشراف جيبه! ┇❌*\n╯───────────────╰ـ',    }[type];

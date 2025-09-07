@@ -10,16 +10,25 @@ import fs from 'fs';
 import moment from 'moment-timezone';
 
 // Define global variables
-global.owner = [
-  ['96176337375', 'Elta'],
-  ['+966535993926', 'Omar'],
-   ];
-global.xaxa = 'kaneki';
-global.suittag = ['96176337375'];
-global.prems = ['96176337375'];
-global.packname = 'Yuki';
-global.author = '';
-global.wm = '★𝓝𝓲𝓷𝓸 - 𝑩𝑶𝑻 𝐵𝛩𝑇★';
+// Owners: comma‑separated numbers in .env (e.g. OWNER_NUMBERS=96176337375,+966535993926)
+const ownerEnv = process.env.OWNER_NUMBERS || '';
+// Each owner can optionally include a name after a colon, e.g. "96176337375:Elta"
+global.owner = ownerEnv
+  ? ownerEnv.split(',').map(entry => {
+      const [number, name] = entry.split(':');
+      return [number.trim(), name?.trim() || ''];
+    })
+  : [
+      ['96176337375', 'Elta'],
+      ['+966535993926', 'Omar'],
+    ];
+
+global.xaxa    = process.env.XAXA    || 'kaneki';
+global.suittag = (process.env.SUITTAG || '96176337375').split(',');
+global.prems   = (process.env.PREMS   || '96176337375').split(',');
+global.packname = process.env.PACKNAME || 'Yuki';
+global.author   = process.env.AUTHOR   || '';
+global.wm       = process.env.WM       || '★ -  ★';
 global.titulowm = '🤖 𝓝𝓲𝓷𝓸 - 𝑩𝑶𝑻 🤖';
 global.titulowm2 = '乂 𝓝𝓲𝓷𝓸 - 𝑩𝑶𝑻 乂';
 global.igfg = '★𝓝𝓲𝓷𝓸&𝑩𝑶𝑻★';

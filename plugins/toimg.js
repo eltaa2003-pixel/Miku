@@ -1,5 +1,6 @@
 import fetch from 'node-fetch'
 import fs from 'fs'
+import { fileTypeFromBuffer } from 'file-type'
 import path from 'path'
 import { spawn } from 'child_process'
 
@@ -209,11 +210,14 @@ let handler = async (m, { conn, usedPrefix, command }) => {
       
       const imageUrl = match[0]
       const imageResponse = await fetch(imageUrl)
-      const imageBuffer = await imageResponse.buffer()
+      const imageBuffer = await imageResponse.arrayBuffer()
+      const type = await fileTypeFromBuffer(imageBuffer)
       
-      if (imageBuffer && imageBuffer.length > 0) {
+      if (type && type.mime.startsWith('image/')) {
         await conn.sendFile(m.chat, imageBuffer, 'sticker-to-image.png', '*✅ تم تحويل الملصق إلى صورة بنجاح!*', m)
         return
+      } else {
+        throw new Error('Online conversion did not return a valid image.')
       }
       
     } catch (onlineError) {

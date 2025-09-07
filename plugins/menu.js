@@ -10,6 +10,12 @@ import path from "path";
 // Load the video from config
 const menuVideoUrl = "./menu_video.mp4";
 
+// Simple cache for plugin scan results (expires after 5 minutes)
+const pluginCache = {
+  lastUpdated: 0,
+  data: null,
+};
+
 // Define bot name
 const botname = "Y U K I";
 
@@ -64,77 +70,118 @@ function extractCommands(content) {
 
     // Remove duplicates and filter out empty/invalid commands
     const uniqueCommands = [...new Set(commands)]
-        .filter(cmd => cmd && cmd.length > 0 && cmd.length < 20)
-        .map(cmd => cmd.startsWith('.') ? cmd : '.' + cmd);
+      .filter(cmd => cmd && cmd.length > 0 && cmd.length < 20)
+      .map(cmd => cmd.startsWith('.') ? cmd : '.' + cmd);
+  
+    // Return all commands so nothing is omitted
+    return uniqueCommands;
+  }
 
-    return uniqueCommands.slice(0, 8); // Limit to 8 commands max for menu display
+// ---------------------------------------------------------------------------
+// Extract tags from a plugin file.  Looks for assignments like:
+//   handler.tags = ['admin', 'group']
+// Returns an array of tags (lowercase).  If nothing is found, returns [].
+function extractTags(content) {
+  const tagPattern = /handler\.tags\s*=\s*\[([^\]]+)\]/m;
+  const match = tagPattern.exec(content);
+  if (match && match[1]) {
+    return match[1]
+      .split(/,/)
+      .map(t => t.trim().replace(/['"]/g, '').toLowerCase())
+      .filter(t => t.length > 0);
+  }
+  return [];
 }
-
 // Function to scan all plugins and categorize them
 async function scanPlugins(userId) {
-    const pluginDir = './plugins';
-    const isOwner = isUserOwner(userId);
-    const plugins = {
-        admin: [],
-        games: [],
-        tools: [],
-        owner: [],
-        general: []
-    };
+  const pluginDir = './plugins';
+  const now = Date.now();
 
-    try {
-        const files = fs.readdirSync(pluginDir).filter(file => 
-            file.endsWith('.js') && file !== 'menu.js'
-        );
+  // Return cached plugins if data exists and is fresh (< 5 minutes old)
+  if (pluginCache.data && (now - pluginCache.lastUpdated) < 5 * 60_000) {
+    return pluginCache.data;
+  }
+  const isOwner = isUserOwner(userId);
+  const plugins = {
+    admin: [],
+    games: [],
+    tools: [],
+    owner: [],
+    general: []
+  };
 
-        for (const file of files) {
-            try {
-                const filePath = path.join(pluginDir, file);
-                const content = fs.readFileSync(filePath, 'utf-8');
-                const pluginName = path.basename(file, '.js');
-                
-                // Check if plugin is owner-only
-                const isOwnerOnly = content.includes('handler.owner = true') ||
-                                  content.includes('handler.owner=true') ||
-                                  content.includes('isROwner') ||
-                                  content.includes('owner: true');
+  try {
+    const files = fs.readdirSync(pluginDir).filter(file =>
+      file.endsWith('.js') && file !== 'menu.js'
+    );
 
-                // Skip owner-only plugins for regular users
-                if (isOwnerOnly && !isOwner) {
-                    continue;
-                }
+    for (const file of files) {
+      try {
+        const filePath = path.join(pluginDir, file);
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const pluginName = path.basename(file, '.js');
+        
+        // Check if plugin is owner-only
+        const isOwnerOnly = content.includes('handler.owner = true') ||
+                              content.includes('handler.owner=true') ||
+                              content.includes('isROwner') ||
+                              content.includes('owner: true');
 
-                // Extract commands
-                const commands = extractCommands(content);
-                
-                // Categorize plugins based on their content and tags
-                let category = 'general';
-                
-                if (isOwnerOnly) {
-                    category = 'owner';
-                } else if (content.includes('admin') || content.includes('promote') || content.includes('demote') || content.includes('kick') || content.includes('ban')) {
-                    category = 'admin';
-                } else if (content.includes('game') || pluginName.includes('ta3') || pluginName.includes('كت') || pluginName.includes('س') || content.includes('متع') || content.includes('سس')) {
-                    category = 'games';
-                } else if (content.includes('sticker') || content.includes('image') || content.includes('hdr') || content.includes('dehaze') || content.includes('toimg') || content.includes('tovid')) {
-                    category = 'tools';
-                }
-
-                plugins[category].push({
-                    name: pluginName,
-                    commands: commands,
-                    file: file
-                });
-
-            } catch (error) {
-                console.error(`Error processing plugin ${file}:`, error);
-            }
+        // Skip owner-only plugins for regular users
+        if (isOwnerOnly && !isOwner) {
+          continue;
         }
-    } catch (error) {
-        console.error('Error scanning plugins:', error);
-    }
 
-    return plugins;
+        // Extract commands and tags
+        const commands = extractCommands(content);
+        const tags = extractTags(content);
+
+        // Determine category from metadata or fallback to heuristics
+        let category = 'general';
+        if (isOwnerOnly) {
+          category = 'owner';
+        } else if (tags.length) {
+          if (tags.includes('owner') || tags.includes('creator')) {
+            category = 'owner';
+          } else if (tags.includes('admin') || tags.includes('group')) {
+            category = 'admin';
+          } else if (tags.includes('game') || tags.includes('games') || tags.includes('fun')) {
+            category = 'games';
+          } else if (tags.includes('tool') || tags.includes('tools') ||
+                     tags.includes('utility') || tags.includes('media')) {
+            category = 'tools';
+          }
+        } else {
+          // Fallback: old keyword heuristic
+          if (content.includes('admin') || content.includes('promote') ||
+              content.includes('demote') || content.includes('kick') ||
+              content.includes('ban')) {
+            category = 'admin';
+          } else if (content.includes('game') || pluginName.includes('ta3') ||
+                     pluginName.includes('كت') || pluginName.includes('س') ||
+                     content.includes('متع') || content.includes('سس')) {
+            category = 'games';
+          } else if (content.includes('sticker') || content.includes('image') ||
+                     content.includes('hdr') || content.includes('dehaze') ||
+                     content.includes('toimg') || content.includes('tovid')) {
+            category = 'tools';
+          }
+        }
+
+        plugins[category].push({ name: pluginName, commands, file });
+
+      } catch (error) {
+        console.error(`Error processing plugin ${file}:`, error);
+      }
+    }
+  } catch (error) {
+    console.error('Error scanning plugins:', error);
+  }
+
+  // Cache the scanned results
+  pluginCache.data = plugins;
+  pluginCache.lastUpdated = now;
+  return plugins;
 }
 
 // Function to generate dynamic menus

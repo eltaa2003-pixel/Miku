@@ -36,12 +36,13 @@ import store from './lib/store.js';
 import qrcode from 'qrcode-terminal';
 import encryptionManager, { handleEncryptionError } from './lib/encryption-manager.js';
 import renderSessionManager, { initializeRenderSession } from './render-config.js';
+import { scheduleDailyBackup } from './lib/autoBackup.js';
 
 // FIXED IMPORTS FOR COMMONJS MODULES
 import promotePkg from './plugins/promote.cjs';
 const { promoteCommand, handlePromotionEvent } = promotePkg;
 
-import demotePkg from './plugins/demote.cjs';
+import demotePkg from './plugins/تخفيض.cjs';
 const { demoteCommand, handleDemotionEvent } = demotePkg;
 
 const {proto} = (await import('@whiskeysockets/baileys')).default;
@@ -652,6 +653,9 @@ async function connectionUpdate(update) {
       console.log(chalk.cyan(`👤 Connected as: ${conn.user?.name || 'Unknown'}`));
       console.log(chalk.cyan(`📱 Phone: ${conn.user?.id || 'Unknown'}`));
     }
+
+    // Schedule daily backups
+    scheduleDailyBackup(conn, 2);
 
     // Check for restart flag file
     if (existsSync('./restart.json')) {
