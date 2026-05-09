@@ -1,46 +1,10 @@
-import mongoose from 'mongoose';
-import dotenv from 'dotenv';
 import { getPhoneNumber, normalizeJid } from '../lib/simple-jid.js';
+import { ProfileDB } from '../lib/db-local.js';
 import pkg from 'baileys-pro';
 const { jidNormalizedUser } = pkg;
 
-// Load environment variables from .env file
-dotenv.config({ path: './.env' });
-
-// MongoDB URI from environment variables
-const medoUri = process.env.MONGODB_URI || process.env.MONGO_URI || 'mongodb://localhost:27017/defaultdb';
-
-// Connect to MongoDB with better error handling
-const connectDB = async () => {
-    try {
-        await mongoose.connect(medoUri, { 
-            useNewUrlParser: true, 
-            useUnifiedTopology: true 
-        });
-        console.log('Connected to MongoDB');
-    } catch (medoError) {
-        console.error('Error connecting to MongoDB:', medoError);
-        process.exit(1);
-    }
-};
-
-// Initialize connection
-connectDB();
-
-// Define the BK9 model
-const medoBk9Schema = new mongoose.Schema({
-    groupId: { type: String, required: true },
-    userId: { type: String, required: true },
-    bk9: { type: String, required: true }
-}, {
-    timestamps: true // Add timestamps for better tracking
-});
-
-// Create compound index for better query performance
-medoBk9Schema.index({ groupId: 1, userId: 1 }, { unique: true });
-medoBk9Schema.index({ groupId: 1, bk9: 1 }, { unique: true });
-
-const medoBK9 = mongoose.model('BK9', medoBk9Schema);
+// Using local lowdb instead of MongoDB
+const medoBK9 = ProfileDB;
 
 // Helper to properly handle JIDs (preserve @lid format for baileys-pro compatibility)
 const processJid = (jid) => {
@@ -469,11 +433,6 @@ let medoHandler = async function (medoContext, { conn: medoConn, text: medoText,
 
         // If there's no command, exit early.
         if (!medoCommand) return;
-
-        // Ensure database connection for regular commands.
-        if (mongoose.connection.readyState !== 1) {
-            await connectDB();
-        }
 
         console.log('Command received:', medoCommand);
         console.log('Group ID:', medoContext.chat);

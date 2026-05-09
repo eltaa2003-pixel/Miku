@@ -1,6 +1,6 @@
 import fs from 'fs';
 import { normalizeJid, safeGroupOperation } from '../lib/simple.js';
-import { areJidsSameUser } from '@whiskeysockets/baileys';
+import { areJidsSameUser } from 'baileys-pro';
 
 const handler = async (m, {conn, usedPrefix, text, participants}) => {
     try {

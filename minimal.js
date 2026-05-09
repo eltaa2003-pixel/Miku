@@ -1,4 +1,4 @@
-import { makeWASocket, useMultiFileAuthState } from '@whiskeysockets/baileys';
+import { makeWASocket, useMultiFileAuthState } from 'baileys-pro';
 import pino from 'pino';
 
 console.log('Before auth state');

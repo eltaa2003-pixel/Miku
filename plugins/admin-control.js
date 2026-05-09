@@ -3,28 +3,10 @@
 // FIXED: Proper bot, owner, and group creator protection
 
 import { jidDecode, areJidsSameUser } from 'baileys-pro';
-import mongoose from 'mongoose';
-import dotenv from 'dotenv';
-dotenv.config({ path: './.env' });
+import { AdminDB } from '../lib/db-local.js';
 
-// MongoDB connection
-if (!mongoose.connection.readyState) {
-  mongoose.connect(process.env.MONGODB_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    serverSelectionTimeoutMS: 5000
-  }).then(() => console.log('✅ Connected to MongoDB (admin-control)'))
-    .catch((err) => console.error('❌ MongoDB connection error (admin-control):', err.message));
-}
-
-// GroupProtection model
-const groupProtectionSchema = new mongoose.Schema({
-  groupId: { type: String, required: true, unique: true },
-  isActive: { type: Boolean, default: false },
-  startedAt: { type: Date },
-  stoppedAt: { type: Date }
-});
-const GroupProtection = mongoose.models.GroupProtection || mongoose.model('GroupProtection', groupProtectionSchema);
+// Using local lowdb instead of MongoDB
+const GroupProtection = AdminDB;
 
 const adminMonitor = {
     isActive: false,
@@ -386,7 +368,7 @@ async function startProt() {
     adminMonitor.sock.ev.on('group-participants.update', adminMonitor.eventHandler);
     adminMonitor.isActive = true;
     adminMonitor.stats.startTime = new Date();
-    // Save to MongoDB
+    // Save to local database
     try {
       const groupId = adminMonitor.sock.user.id;
       await GroupProtection.findOneAndUpdate(
@@ -412,7 +394,7 @@ async function stopProt() {
         adminMonitor.sock.ev.off('group-participants.update', adminMonitor.eventHandler);
     }
     adminMonitor.isActive = false;
-    // Save to MongoDB
+    // Save to local database
     try {
       const groupId = adminMonitor.sock.user.id;
       await GroupProtection.findOneAndUpdate(

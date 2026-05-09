@@ -79,7 +79,6 @@ class EnhancedYukiPlugin {
             });
             
             this.isInitialized = true;
-            console.log('Enhanced يوكي initialized successfully! 🚀');
         } catch (error) {
             console.error('Error initializing Enhanced يوكي:', error);
             throw error;
@@ -1106,9 +1105,14 @@ let enhancedYukiInstance = null;
 let yukiInitPromise = null;
 
 async function ensureEnhancedYukiInitialized() {
+    // Graceful degradation: skip Yuki if MongoDB URI is not configured
+    if (!process.env.MONGODB_URI) {
+      console.warn('⚠️ Yuki plugin skipped: MONGODB_URI is not set in .env');
+      return;
+    }
     if (!enhancedYukiInstance) {
         enhancedYukiInstance = new EnhancedYukiPlugin({
-            mongoUrl: process.env.MONGODB_URI || 'mongodb://localhost:27017',
+            mongoUrl: process.env.MONGODB_URI,
             dbName: process.env.YUKI_DB_NAME || 'yuki_enhanced',
             geminiApiKey: process.env.GEMINI_API_KEY,
             googleSearchApiKey: process.env.GOOGLE_SEARCH_API_KEY,
@@ -1121,7 +1125,7 @@ async function ensureEnhancedYukiInitialized() {
     } else if (yukiInitPromise) {
         await yukiInitPromise;
     }
-}
+  }
 
 const yukiAllowedPairs = {};
 

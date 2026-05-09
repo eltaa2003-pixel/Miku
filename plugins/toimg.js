@@ -208,9 +208,9 @@ let handler = async (m, { conn, usedPrefix, command }) => {
         throw new Error('Could not find converted image URL')
       }
       
-      const imageUrl = match[0]
-      const imageResponse = await fetch(imageUrl)
-      const imageBuffer = await imageResponse.arrayBuffer()
+       const imageUrl = match[0]
+       const imageResponse = await fetch(imageUrl)
+       const imageBuffer = Buffer.from(await imageResponse.arrayBuffer())
       const type = await fileTypeFromBuffer(imageBuffer)
       
       if (type && type.mime.startsWith('image/')) {

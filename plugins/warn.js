@@ -1,23 +1,9 @@
-import mongoose from 'mongoose';
-import WarningModel from '../lib/Warning.js';
+import { WarningDB } from '../lib/db-local.js';
 import pkg from 'baileys-pro';
 const { proto, jidNormalizedUser } = pkg;
 import { normalizeJid, extractUserFromJid } from '../lib/simple.js';
 
-// Add database connection logic
-const connectDB = async () => {
-  try {
-    if (mongoose.connection.readyState === 0) {
-      await mongoose.connect(
-        process.env.MONGODB_URI || 'mongodb+srv://itachi3mk:mypassis1199@cluster0.zzyxjo3.mongodb.net/?retryWrites=true&w=majority'
-      );
-      console.log('✅ MongoDB connected successfully for warnings system');
-    }
-  } catch (error) {
-    console.error('❌ MongoDB connection failed:', error);
-  }
-};
-connectDB();
+// Using local lowdb instead of MongoDB
 
 // Helper to properly handle JIDs (preserve @lid format for baileys-pro compatibility)
 const processJid = (jid) => {
@@ -46,13 +32,7 @@ const formatUserForMention = (jid) => {
   };
 };
 
-mongoose.connection.on('disconnected', () => {
-  console.log('⚠️ MongoDB disconnected!');
-});
 
-mongoose.connection.on('reconnected', () => {
-  console.log('🔁 MongoDB reconnected');
-});
 
 // Core functionality
 const validateAdmin = async (ctx) => {
@@ -144,12 +124,6 @@ const resolveTargetUser = (ctx) => {
 async function handleAddWarning(ctx, reason) {
   try {
     console.log('Starting warning process...');
-    
-    // Check database connection
-    if (mongoose.connection.readyState !== 1) {
-      console.error('Database not connected, state:', mongoose.connection.readyState);
-      return ctx.reply('❌ خطأ في الاتصال بقاعدة البيانات');
-    }
 
     // Admin validation
     const isAdmin = await validateAdmin(ctx);
@@ -179,52 +153,41 @@ async function handleAddWarning(ctx, reason) {
     console.log('Attempting database operation...');
     console.log('User ID:', targetUser.id, 'Group ID:', ctx.chat);
 
-    // Database operation with better error handling
-    let userWarnings;
-    try {
-      userWarnings = await WarningModel.findOneAndUpdate(
-        { userId: targetUser.id, groupId: ctx.chat },
-        {
-          $push: {
-            warnings: {
-              cause: reason || '❌ لم يتم تقديم سبب',
-              date: new Date(),
-              issuer: ctx.sender
-            }
-          }
-        },
-        { new: true, upsert: true }
-      );
-    } catch (dbError) {
-      console.error('Database operation failed:', dbError);
-      
-      // Handle duplicate key error specifically
-      if (dbError.code === 11000) {
-        console.log('Duplicate key error detected, attempting to find existing record...');
-        try {
-          // Try to find the existing record and update it
-          userWarnings = await WarningModel.findOne({ userId: targetUser.id, groupId: ctx.chat });
-          if (userWarnings) {
-            // Add the warning to existing record
-            userWarnings.warnings.push({
-              cause: reason || '❌ لم يتم تقديم سبب',
-              date: new Date(),
-              issuer: ctx.sender
-            });
-            await userWarnings.save();
-            console.log('Successfully updated existing record');
-          } else {
-            // If no record found, there might be an index issue
-            throw new Error('فشل في العثور على السجل الموجود. قد تحتاج إلى إعادة تشغيل البوت لإصلاح قاعدة البيانات.');
-          }
-        } catch (fallbackError) {
-          console.error('Fallback operation also failed:', fallbackError);
-          throw new Error(`خطأ في قاعدة البيانات: ${fallbackError.message}`);
-        }
-      } else {
-        throw new Error(`Database error: ${dbError.message}`);
-      }
+    // Database operation
+    let userWarnings = await WarningDB.findOne({
+      userId: targetUser.id,
+      groupId: ctx.chat
+    });
+
+    if (!userWarnings) {
+      // Create new warning record
+      userWarnings = {
+        userId: targetUser.id,
+        groupId: ctx.chat,
+        count: 1,
+        warnings: [{
+          cause: reason || '❌ لم يتم تقديم سبب',
+          date: new Date(),
+          issuer: ctx.sender
+        }]
+      };
+    } else {
+      // Update existing record
+      userWarnings.count = (userWarnings.count || 0) + 1;
+      userWarnings.warnings = userWarnings.warnings || [];
+      userWarnings.warnings.push({
+        cause: reason || '❌ لم يتم تقديم سبب',
+        date: new Date(),
+        issuer: ctx.sender
+      });
     }
+
+    // Upsert (insert or update)
+    await WarningDB.findOneAndUpdate(
+      { userId: targetUser.id, groupId: ctx.chat },
+      userWarnings,
+      { upsert: true }
+    );
 
     console.log('Database operation successful, warnings count:', userWarnings.warnings.length);
 
@@ -286,9 +249,9 @@ async function handleAddWarning(ctx, reason) {
           });
           
           // Clear warnings after kick
-          await WarningModel.deleteOne({ 
-            userId: targetUser.id, 
-            groupId: ctx.chat 
+          await WarningDB.deleteOne({
+            userId: targetUser.id,
+            groupId: ctx.chat
           });
         } else {
           await ctx.conn.sendMessage(ctx.chat, {
@@ -310,14 +273,8 @@ async function handleAddWarning(ctx, reason) {
 async function handleViewWarnings(ctx, targetUserId) {
   try {
     console.log('Viewing warnings for user:', targetUserId);
-    
-    // Check database connection
-    if (mongoose.connection.readyState !== 1) {
-      console.error('Database not connected');
-      return ctx.reply('❌ خطأ في الاتصال بقاعدة البيانات');
-    }
 
-    const warnings = await WarningModel.findOne({
+    const warnings = await WarningDB.findOne({
       userId: targetUserId,
       groupId: ctx.chat
     }).catch(dbError => {
@@ -363,11 +320,6 @@ async function handleViewWarnings(ctx, targetUserId) {
 async function handleDeleteOneWarning(ctx) {
   try {
     console.log('Deleting one warning...');
-    
-    // Check database connection
-    if (mongoose.connection.readyState !== 1) {
-      return ctx.reply('❌ خطأ في الاتصال بقاعدة البيانات');
-    }
 
     // Admin validation
     const isAdmin = await validateAdmin(ctx);
@@ -382,7 +334,7 @@ async function handleDeleteOneWarning(ctx) {
     }
 
     // Find user warnings
-    const userWarnings = await WarningModel.findOne({
+    const userWarnings = await WarningDB.findOne({
       userId: targetUser.id,
       groupId: ctx.chat
     }).catch(dbError => {
@@ -396,16 +348,21 @@ async function handleDeleteOneWarning(ctx) {
 
     // Remove the last warning
     userWarnings.warnings.pop();
-    await userWarnings.save();
 
     const remainingCount = userWarnings.warnings.length;
 
     // If no warnings left, delete the document
     if (remainingCount === 0) {
-      await WarningModel.deleteOne({ 
-        userId: targetUser.id, 
-        groupId: ctx.chat 
+      await WarningDB.deleteOne({
+        userId: targetUser.id,
+        groupId: ctx.chat
       });
+    } else {
+      // Update warnings array
+      await WarningDB.findOneAndUpdate(
+        { userId: targetUser.id, groupId: ctx.chat },
+        { warnings: userWarnings.warnings }
+      );
     }
 
     // Use consistent mention logic
@@ -425,11 +382,6 @@ async function handleDeleteOneWarning(ctx) {
 async function handleClearAllWarnings(ctx) {
   try {
     console.log('Clearing all warnings...');
-    
-    // Check database connection
-    if (mongoose.connection.readyState !== 1) {
-      return ctx.reply('❌ خطأ في الاتصال بقاعدة البيانات');
-    }
 
     // Admin validation
     const isAdmin = await validateAdmin(ctx);
@@ -443,18 +395,27 @@ async function handleClearAllWarnings(ctx) {
       return ctx.reply('⚠️ يرجى تحديد مستخدم عن طريق الرد أو المنشن');
     }
 
+    // Check if warnings exist first
+    const userWarnings = await WarningDB.findOne({
+      userId: targetUser.id,
+      groupId: ctx.chat
+    }).catch(dbError => {
+      console.error('Database query failed:', dbError);
+      throw new Error(`Database error: ${dbError.message}`);
+    });
+
+    if (!userWarnings) {
+      return ctx.reply('✔️ لا يوجد إنذارات لحذفها');
+    }
+
     // Delete all warnings for the user
-    const result = await WarningModel.deleteOne({
+    await WarningDB.deleteOne({
       userId: targetUser.id,
       groupId: ctx.chat
     }).catch(dbError => {
       console.error('Database deletion failed:', dbError);
       throw new Error(`Database error: ${dbError.message}`);
     });
-
-    if (result.deletedCount === 0) {
-      return ctx.reply('✔️ لا يوجد إنذارات لحذفها');
-    }
 
     // Use consistent mention logic
     const clearMentions = targetUser.jid.includes('@lid') ? [targetUser.jid] : [targetUser.id + '@s.whatsapp.net'];
@@ -497,7 +458,7 @@ export const warningHandler = async (ctx, { command }) => {
 Admin: ${testAdmin}
 Is Group: ${ctx.isGroup}
 Command: ${command}
-DB State: ${mongoose.connection.readyState}
+DB State: N/A (lowdb)
 Sender: ${ctx.sender}
 Chat: ${ctx.chat}
 Quoted: ${!!ctx.quoted}

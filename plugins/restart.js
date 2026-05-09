@@ -1,4 +1,4 @@
-import { jidDecode } from '@whiskeysockets/baileys';
+import { jidDecode } from 'baileys-pro';
 import { writeFileSync } from 'fs';
 
 let handler = async (m, { conn, isROwner }) => {

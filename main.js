@@ -26,11 +26,9 @@ import syntaxerror from 'syntax-error';
 import {tmpdir} from 'os';
 import {format} from 'util';
 import pino from 'pino';
-import {Boom} from '@hapi/boom';
 import {makeWASocket, protoType, serialize} from './lib/simple.js';
 import { Low } from 'lowdb';
 import { JSONFile } from 'lowdb/node';
-import {mongoDB, mongoDBV2} from './lib/mongoDB.js';
 import cloudDBAdapter from './lib/cloudDBAdapter.js';
 import store from './lib/store.js';
 import qrcode from 'qrcode-terminal';
@@ -775,14 +773,14 @@ function cleanup() {
   if (global.conn) {
     global.conn.ws.close();
   }
-  // Clear all intervals
-  clearInterval(global.dbInterval);
-  clearInterval(global.cleanupInterval);
-  clearInterval(global.purgeInterval);
-  clearInterval(global.purgeSBInterval);
-  clearInterval(global.purgeOldFilesInterval);
-  clearInterval(global.statusInterval);
-  }
+  // Clear all intervals with existence checks
+  if (global.dbInterval) clearInterval(global.dbInterval);
+  if (global.cleanupInterval) clearInterval(global.cleanupInterval);
+  if (global.purgeInterval) clearInterval(global.purgeInterval);
+  if (global.purgeSBInterval) clearInterval(global.purgeSBInterval);
+  if (global.purgeOldFilesInterval) clearInterval(global.purgeOldFilesInterval);
+  if (global.statusInterval) clearInterval(global.statusInterval);
+}
 
 // Simple signal handlers for cleanup only (process manager handles exit)
 process.on('SIGTERM', () => {

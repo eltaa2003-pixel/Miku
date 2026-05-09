@@ -1,4 +1,4 @@
-import baileys from '@whiskeysockets/baileys';
+import baileys from 'baileys-pro';
 const { proto, generateWAMessageFromContent } = baileys;
 
 let handler = async (message, { conn, text, participants }) => {

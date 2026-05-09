@@ -33,13 +33,22 @@ global.titulowm = '🤖 𝓝𝓲𝓷𝓸 - 𝑩𝑶𝑻 🤖';
 global.titulowm2 = '乂 𝓝𝓲𝓷𝓸 - 𝑩𝑶𝑻 乂';
 global.igfg = '★𝓝𝓲𝓷𝓸&𝑩𝑶𝑻★';
 global.wait = '*⌛ _downloading..._*\n\n*▰▰▰▱▱▱▱▱*';
-global.imagen1 = fs.readFileSync('./menu.jpg');
-global.imagen2 = fs.readFileSync('./menu.jpg');
-global.imagen3 = fs.readFileSync('./menu.jpg');
-global.imagen4 = fs.readFileSync('./menu.jpg');
 global.mods = [];
 global.d = new Date();
 global.locale = 'ar';
+
+// Load menu image safely
+let menuImg;
+try {
+  menuImg = fs.readFileSync('./menu.jpg');
+} catch (e) {
+  menuImg = Buffer.alloc(0); // fallback empty buffer
+  console.warn('menu.jpg not found, using empty buffer');
+}
+global.imagen1 = menuImg;
+global.imagen2 = menuImg;
+global.imagen3 = menuImg;
+global.imagen4 = menuImg;
 global.dia = d.toLocaleDateString(locale, { weekday: 'long' });
 global.fecha = d.toLocaleDateString(locale, { day: 'numeric', month: 'numeric', year: 'numeric' });
 global.mes = d.toLocaleDateString(locale, { month: 'long' });

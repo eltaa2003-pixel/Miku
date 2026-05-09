@@ -42,11 +42,6 @@ build/Release
 # Dependency directories
 dist/
 
-# dotenv environment variable files
-.env
-.env.*
-.env
-
 # Database and session files
 database.json
 MyninoSession/

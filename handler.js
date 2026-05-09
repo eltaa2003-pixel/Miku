@@ -1,13 +1,4 @@
-import { generateWAMessageFromContent } from '@whiskeysockets/baileys';
-import { smsg } from './lib/simple.js';
-import { format } from 'util';
-import { fileURLToPath } from 'url';
-import path from 'path';
-import { unwatchFile, watchFile } from 'fs';
-import fs from 'fs';
-import chalk from 'chalk';
-import mddd5 from 'md5';
-import { jidDecode } from '@whiskeysockets/baileys';
+import { generateWAMessageFromContent, jidDecode } from 'baileys-pro';
 import demotePkg from './plugins/تخفيض.cjs';
 const handleDemotionEvent = demotePkg.handleDemotionEvent;
 import promotePkg from './plugins/promote.cjs';
@@ -40,72 +31,6 @@ const userRateLimitMap = new Map();
 const RATE_LIMIT_INTERVAL_MS = 5000; // 5‑second cool‑down (tweak as needed)
 
 const commandQueue = new Map();
-
-// Message logging function
-export function logMessage(m, type = 'INCOMING') {
-    try {
-        const timestamp = new Date().toLocaleTimeString();
-        const chatName = m.isGroup ? m.chat.split('@')[0] : 'Private';
-        const senderName = type === 'OUTGOING' ? 'Bot' : (m.pushName || m.sender.split('@')[0]);
-        
-        // Determine message type and content
-        let messageType = 'Text';
-        let content = m.text || '';
-        
-        if (m.imageMessage) {
-            messageType = 'Image';
-            content = m.imageMessage.caption || '[Image]';
-        } else if (m.videoMessage) {
-            messageType = 'Video';
-            content = m.videoMessage.caption || '[Video]';
-        } else if (m.audioMessage) {
-            messageType = 'Audio';
-            content = '[Audio]';
-        } else if (m.documentMessage) {
-            messageType = 'Document';
-            content = m.documentMessage.fileName || '[Document]';
-        } else if (m.stickerMessage) {
-            messageType = 'Sticker';
-            content = '[Sticker]';
-        } else if (m.contactMessage) {
-            messageType = 'Contact';
-            content = m.contactMessage.displayName || '[Contact]';
-        } else if (m.locationMessage) {
-            messageType = 'Location';
-            content = '[Location]';
-        } else if (m.buttonsMessage) {
-            messageType = 'Button';
-            content = m.buttonsMessage.contentText || '[Button Message]';
-        } else if (m.templateMessage) {
-            messageType = 'Template';
-            content = '[Template Message]';
-        }
-        
-        // Color coding based on message type
-        const typeColors = {
-            'Text': chalk.cyan,
-            'Image': chalk.green,
-            'Video': chalk.magenta,
-            'Audio': chalk.yellow,
-            'Document': chalk.blue,
-            'Sticker': chalk.magenta,
-            'Contact': chalk.gray,
-            'Location': chalk.red,
-            'Button': chalk.cyan,
-            'Template': chalk.cyan
-        };
-        
-        const typeColor = typeColors[messageType] || chalk.white;
-        
-        // Format the log message
-        const direction = type === 'INCOMING' ? '📥' : '📤';
-        const typeIcon = type === 'INCOMING' ? '👤' : '🤖';
-        
-        // Message logging handled by print.js
-    } catch (error) {
-        console.log(chalk.red('Error logging message:', error.message));
-    }
-}
 
 export async function handler(chatUpdate) {
     this.msgqueque = this.msgqueque || [];
