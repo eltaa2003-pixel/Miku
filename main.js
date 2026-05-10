@@ -43,8 +43,8 @@ const { promoteCommand, handlePromotionEvent } = promotePkg;
 import demotePkg from './plugins/تخفيض.cjs';
 const { demoteCommand, handleDemotionEvent } = demotePkg;
 
-const {proto} = (await import('@whiskeysockets/baileys')).default;
-const {DisconnectReason, useMultiFileAuthState, MessageRetryMap, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, isJidBroadcast} = await import('@whiskeysockets/baileys');
+const {proto} = (await import('baileys-pro')).default;
+const {DisconnectReason, useMultiFileAuthState, MessageRetryMap, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, isJidBroadcast} = await import('baileys-pro');
 const {CONNECTING} = ws;
 const {chain} = lodash;
 

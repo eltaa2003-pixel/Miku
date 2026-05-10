@@ -160,8 +160,8 @@ const extractPossibleAnswers = (text) => {
   const parts = text.split(separators)
     .map(part => normalizeForMatching(part))
     .filter(part => part.length > 0);
-  const fullText = normalizeForMatching(text);
-  return [...new Set([fullText, ...parts])];
+  // Only return individual parts, not the full text
+  return [...new Set(parts)];
 };
 
 const addAnswer = async (m, newAnswer, conn) => {

@@ -5,6 +5,11 @@ import promotePkg from './plugins/promote.cjs';
 const handlePromotionEvent = promotePkg.handlePromotionEvent;
 import privateBlocker, { handlePrivateMessage } from './lib/private-blocker.js';
 import { addToQueue, startQueue } from './lib/commandQueue.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { watchFile, unwatchFile } from 'fs';
+import chalk from 'chalk';
+const { smsg } = await import('./lib/simple.js');
 
 
 
