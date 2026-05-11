@@ -779,8 +779,13 @@ async function connectionUpdate(update) {
 let isShuttingDown = false;
 
 function cleanup() {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  
   if (global.conn) {
-    global.conn.ws.close();
+    try {
+      global.conn.ws.close();
+    } catch (e) {}
   }
   // Clear all intervals with existence checks
   if (global.dbInterval) clearInterval(global.dbInterval);

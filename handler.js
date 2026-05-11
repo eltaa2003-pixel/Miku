@@ -465,7 +465,7 @@ export async function handler(chatUpdate) {
                     const lastCommandTime = chatSettings.lastCommandTime || 0;
                     if (now - lastCommandTime < chatSettings.slowmodeMs) {
                         const remaining = ((lastCommandTime + chatSettings.slowmodeMs - now) / 1000).toFixed(1);
-                        await m.reply(`🕒 Slow mode is active. Please wait ${remaining}s.`);
+                        await m.reply(`🕒 Slow mode: ${remaining}s remaining.`);
                         continue;
                     }
                     chatSettings.lastCommandTime = now;
@@ -475,7 +475,7 @@ export async function handler(chatUpdate) {
                 const userId = m.sender;
                 const lastTime = userRateLimitMap.get(userId) || 0;
                 if (now - lastTime < RATE_LIMIT_INTERVAL_MS) {
-                    await m.reply('⚠️ Please wait a few seconds before sending another command.');
+                    await m.reply('⚠️ Rate limit: wait before sending another command.');
                     continue;
                 }
                 userRateLimitMap.set(userId, now);

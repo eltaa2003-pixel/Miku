@@ -25,7 +25,7 @@ let handler = async (m, { conn, isROwner }) => {
   }
 
   // Send restart message before triggering the restart
-  await m.reply('🔄 Restarting Bot...\nPlease wait a moment.');
+  await m.reply('🔄 Restarting Bot...');
 
   // Create a flag file to indicate a restart is in progress and where it was triggered
   const restartInfo = { chatId: m.chat, timestamp: Date.now() };

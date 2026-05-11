@@ -1,17 +1,9 @@
 import axios from 'axios';
 
-// Removed cooldown logic
-
 let handler = async (m, { conn }) => {
-  // Cooldown removed
-
   try {
-    // Send loading message
-    // const loadingMsg = await conn.sendMessage(m.chat, { text: '🔍 جاري البحث عن صورة...' });
-
-    // Optimized axios request with timeout and compression
     const response = await axios.get(`https://raw.githubusercontent.com/Seiyra/imagesfjsfasfa/refs/heads/main/okay.js`, {
-      timeout: 5000, // 5 second timeout
+      timeout: 5000,
       headers: {
         'Accept-Encoding': 'gzip, deflate, br',
         'User-Agent': 'Mozilla/5.0 (compatible; Bot/1.0)'
@@ -28,55 +20,35 @@ let handler = async (m, { conn }) => {
       throw new Error('No images available.');
     }
 
-    // Get random image URL and validate it
     let url = res[Math.floor(Math.random() * res.length)];
     
-    // Validate URL format
     if (!url || typeof url !== 'string' || !url.startsWith('http')) {
       throw new Error('Invalid image URL format');
     }
 
-    // Delete loading message
-    // await conn.sendMessage(m.chat, { delete: loadingMsg.key });
-
-    // Send image with optimized settings
     try {
       await conn.sendFile(m.chat, url, 'image.jpg', '', m, false, {
         asDocument: false,
         mimetype: 'image/jpeg'
       });
     } catch (sendError) {
-      // If sending fails, try as a text link instead
-      if (sendError.message && sendError.message.includes('Invalid media type')) {
-        await conn.sendMessage(m.chat, { 
-          text: '🖼️ صورة:\n' + url 
-        });
-      } else {
-        throw sendError;
-      }
+      console.log('Send error:', sendError.message);
+      await m.reply('🖼️ صورة:\n' + url);
     }
 
   } catch (error) {
     console.error('Image fetch error:', error.message);
     
-    // Delete loading message if it exists
-    try {
-      // if (loadingMsg) { // loadingMsg is removed
-      //   await conn.sendMessage(m.chat, { delete: loadingMsg.key });
-      // }
-    } catch (e) {}
-
-    // Send appropriate error message
     let errorMsg = '❌ فشل في جلب الصورة. ';
-    if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+    if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
       errorMsg += 'انتهت مهلة الاتصال.';
-    } else if (error.message.includes('Network Error')) {
+    } else if (error.message?.includes('Network Error')) {
       errorMsg += 'خطأ في الشبكة.';
     } else {
       errorMsg += 'يرجى المحاولة مرة أخرى.';
     }
 
-    await conn.sendMessage(m.chat, { conversation: errorMsg });
+    await m.reply(errorMsg);
   }
 };
 

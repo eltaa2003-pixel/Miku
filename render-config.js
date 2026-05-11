@@ -26,6 +26,7 @@ class RenderSessionManager {
     this.backupDir = BACKUP_DIR;
     this.lastBackup = 0;
     this.backupInterval = 30 * 60 * 1000; // 30 minutes
+    this.shutdownInProgress = false;
   }
 
   /**
@@ -111,8 +112,12 @@ class RenderSessionManager {
    * Create session backup
    */
   async createBackup() {
+    if (this.shutdownInProgress) return;
+    
     try {
-      const { readdirSync } = await import('fs');
+      const { readdirSync, existsSync } = await import('fs');
+      if (!existsSync(this.sessionDir)) return;
+      
       const files = readdirSync(this.sessionDir);
       const backupData = {
         timestamp: new Date().toISOString(),
@@ -122,9 +127,13 @@ class RenderSessionManager {
       for (const file of files) {
         if (file.endsWith('.json') || file.startsWith('pre-key-') || 
             file.startsWith('session-') || file.startsWith('sender-key-')) {
-          const filePath = join(this.sessionDir, file);
-          const content = readFileSync(filePath, 'utf8');
-          backupData.files[file] = content;
+          try {
+            const filePath = join(this.sessionDir, file);
+            const content = readFileSync(filePath, 'utf8');
+            backupData.files[file] = content;
+          } catch (e) {
+            // Skip files that can't be read
+          }
         }
       }
       
@@ -154,6 +163,9 @@ class RenderSessionManager {
    */
   setupGracefulShutdown() {
     const gracefulShutdown = async (signal) => {
+      if (this.shutdownInProgress) return;
+      this.shutdownInProgress = true;
+      
       console.log(chalk.yellow(`\n🛑 Received ${signal}, creating final backup...`));
       
       try {
@@ -163,11 +175,17 @@ class RenderSessionManager {
         console.error(chalk.red('❌ Error during final backup:', error.message));
       }
       
-      process.exit(0);
+      // Don't call process.exit here - let the main process manager handle shutdown
+      // This prevents conflicting exit handlers
     };
     
-    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    // Only set up handlers if not already handled by parent process
+    if (!process.listenerCount('SIGTERM')) {
+      process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    }
+    if (!process.listenerCount('SIGINT')) {
+      process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    }
   }
 
   /**
