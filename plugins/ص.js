@@ -28,17 +28,33 @@ let handler = async (m, { conn }) => {
       throw new Error('No images available.');
     }
 
-    // Get random image URL
+    // Get random image URL and validate it
     let url = res[Math.floor(Math.random() * res.length)];
+    
+    // Validate URL format
+    if (!url || typeof url !== 'string' || !url.startsWith('http')) {
+      throw new Error('Invalid image URL format');
+    }
 
     // Delete loading message
     // await conn.sendMessage(m.chat, { delete: loadingMsg.key });
 
     // Send image with optimized settings
-    await conn.sendFile(m.chat, url, 'image.jpg', '', m, false, {
-      asDocument: false,
-      mimetype: 'image/jpeg'
-    });
+    try {
+      await conn.sendFile(m.chat, url, 'image.jpg', '', m, false, {
+        asDocument: false,
+        mimetype: 'image/jpeg'
+      });
+    } catch (sendError) {
+      // If sending fails, try as a text link instead
+      if (sendError.message && sendError.message.includes('Invalid media type')) {
+        await conn.sendMessage(m.chat, { 
+          text: '🖼️ صورة:\n' + url 
+        });
+      } else {
+        throw sendError;
+      }
+    }
 
   } catch (error) {
     console.error('Image fetch error:', error.message);

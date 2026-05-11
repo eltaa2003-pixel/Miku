@@ -9,6 +9,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { watchFile, unwatchFile } from 'fs';
 import chalk from 'chalk';
+import { format } from 'util';
 const { smsg } = await import('./lib/simple.js');
 
 
@@ -46,49 +47,89 @@ export async function handler(chatUpdate) {
     // Start the command queue processing
     startQueue(this);
     
-    // Enhanced encryption error handling
+    // Filter out invalid and empty messages before processing
+    let validMessages = [];
     try {
-        if (chatUpdate.messages && chatUpdate.messages.length > 0) {
+        if (chatUpdate.messages && Array.isArray(chatUpdate.messages)) {
             for (const message of chatUpdate.messages) {
-                if (message.key && message.key.remoteJid) {
-                    // Check for encryption errors in message processing
-                    if (message.message && message.message.protocolMessage) {
-                        // Handle protocol message errors
-                        continue;
+                // Skip messages without key information
+                if (!message || !message.key || !message.key.remoteJid) {
+                    continue;
+                }
+                
+                // Skip protocol messages (WhatsApp internal messages)
+                if (message.message && message.message.protocolMessage) {
+                    continue;
+                }
+                
+                // Skip empty messages - this is the main issue causing spam
+                if (!message.message || Object.keys(message.message).length === 0) {
+                    // Only log empty messages occasionally to reduce spam
+                    if (Math.random() < 0.1) { // Log 10% of empty messages
+                        console.log(chalk.dim(`⚠️ Skipping empty message from ${message.key.remoteJid}`));
                     }
-                    
-                    // Pre-validate message integrity
-                    if (!message.message || Object.keys(message.message).length === 0) {
-                        console.log(chalk.yellow(`⚠️ Empty message detected from ${message.key.remoteJid}`));
-                        continue;
+                    continue;
+                }
+                
+                // Check for common decryption errors that indicate corrupted/unreadable messages
+                const messageStr = JSON.stringify(message).toLowerCase();
+                if (messageStr.includes('decrypterror') || 
+                    messageStr.includes('no_session') ||
+                    messageStr.includes('invalid_key')) {
+                    continue;
+                }
+                
+                // Message passed all checks, add to valid messages
+                validMessages.push(message);
+            }
+        }
+    } catch (error) {
+        console.error(chalk.red('❌ Error filtering messages:', error.message));
+        // Continue anyway with original messages if filtering fails
+        validMessages = chatUpdate.messages || [];
+    }
+    
+    // Enhanced encryption error handling for valid messages
+    try {
+        if (validMessages.length > 0) {
+            for (const message of validMessages) {
+                try {
+                    // Validate message content structure
+                    if (message.message && typeof message.message === 'object') {
+                        const messageKeys = Object.keys(message.message);
+                        
+                        // Skip if message type is not recognizable
+                        const allowedTypes = [
+                            'conversation', 'extendedTextMessage', 'imageMessage',
+                            'documentMessage', 'audioMessage', 'videoMessage',
+                            'stickerMessage', 'contactMessage', 'locationMessage',
+                            'listMessage', 'buttonsMessage', 'templateMessage',
+                            'reactionMessage', 'pollUpdateMessage', 'ephemeralMessage',
+                            'viewOnceMessage', 'interactiveMessage'
+                        ];
+                        
+                        if (!messageKeys.some(key => allowedTypes.includes(key))) {
+                            continue;
+                        }
                     }
+                } catch (e) {
+                    console.error(chalk.red('Error validating message:', e.message));
+                    continue;
                 }
             }
         }
     } catch (error) {
-        // Enhanced encryption error handling
         const errorMessage = error.message || error.toString();
-        
-        if (errorMessage.includes('No SenderKeyRecord found for decryption') ||
-            errorMessage.includes('Invalid PreKey ID') ||
-            errorMessage.includes('Bad MAC') ||
-            errorMessage.includes('No matching sessions found') ||
-            errorMessage.includes('Failed to decrypt message') ||
-            errorMessage.includes('Session error')) {
-            
-            console.log(chalk.yellow('🔐 Encryption error detected in handler, delegating to main handler...'));
-            console.log(chalk.yellow(`🔍 Handler error: ${errorMessage}`));
-            
-            // Let the main handler deal with this
-            throw error; // Re-throw to be caught by main handler
-        }
-        
-        // Log other errors
-        console.error(chalk.red('❌ Handler error:', errorMessage));
+        console.log(chalk.yellow(`🔐 Encryption/validation error: ${errorMessage}`));
     }
     
-    this.pushMessage(chatUpdate.messages).catch(console.error);
-    let m = chatUpdate.messages[chatUpdate.messages.length - 1];
+    // Only process valid messages
+    if (validMessages.length === 0) {
+        return;
+    }
+    
+    this.pushMessage(validMessages).catch(console.error);
+    let m = validMessages[validMessages.length - 1];
     if (!m) {
         return;
     }

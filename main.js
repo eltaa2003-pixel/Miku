@@ -12,6 +12,11 @@ if (process.env.DISABLE_TLS_VERIFICATION === 'true') {
   process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
 }
 import './config.js';
+// Use local database if configured
+if (process.env.USE_LOCAL_DB === 'true') {
+  global.useLocalDB = true;
+  console.log('💾 Using local database (LowDB)');
+}
 import {createRequire} from 'module';
 import path, {join} from 'path';
 import {fileURLToPath, pathToFileURL} from 'url';
@@ -35,6 +40,7 @@ import qrcode from 'qrcode-terminal';
 import encryptionManager, { handleEncryptionError } from './lib/encryption-manager.js';
 import renderSessionManager, { initializeRenderSession } from './render-config.js';
 import { scheduleDailyBackup } from './lib/autoBackup.js';
+import errorHandler from './lib/error-handler.js';
 
 // FIXED IMPORTS FOR COMMONJS MODULES
 import promotePkg from './plugins/promote.cjs';
@@ -47,6 +53,9 @@ const {proto} = (await import('baileys-pro')).default;
 const {DisconnectReason, useMultiFileAuthState, MessageRetryMap, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, isJidBroadcast} = await import('baileys-pro');
 const {CONNECTING} = ws;
 const {chain} = lodash;
+
+// Initialize error handler
+await errorHandler.initialize();
 
 protoType();
 serialize();

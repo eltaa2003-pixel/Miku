@@ -57,14 +57,71 @@ class EnhancedYukiPlugin {
 
     async initialize() {
         try {
-            // Initialize MongoDB
-            this.mongoClient = new MongoClient(this.config.mongoUrl);
-            await this.mongoClient.connect();
-            this.db = this.mongoClient.db(this.config.dbName);
+            // Skip MongoDB initialization if using local DB
+            if (process.env.USE_LOCAL_DB === 'true' || global.useLocalDB) {
+                console.log('⏭️  Skipping MongoDB initialization (using local database)');
+                this.isInitialized = true;
+                return;
+            }
             
-            // Initialize Gemini AI
-            this.genAI = new GoogleGenerativeAI(this.config.geminiApiKey);
-            this.model = this.genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+            // Initialize MongoDB with retry logic and SSL/TLS configuration
+            const maxRetries = 2;
+            let retryCount = 0;
+            let lastError;
+
+            while (retryCount < maxRetries) {
+                try {
+                    this.mongoClient = new MongoClient(this.config.mongoUrl, {
+                        maxPoolSize: 10,
+                        minPoolSize: 2,
+                        maxIdleTimeMS: 60000,
+                        // TLS/SSL options
+                        tls: true,
+                        tlsAllowInvalidCertificates: false,
+                        tlsAllowInvalidHostnames: false,
+                        // Connection timeout options
+                        connectTimeoutMS: 10000,
+                        socketTimeoutMS: 30000,
+                        serverSelectionTimeoutMS: 15000,
+                        // Retry options
+                        retryWrites: true,
+                        retryReads: true,
+                        // Health check interval
+                        heartbeatFrequencyMS: 10000
+                    });
+                    
+                    await this.mongoClient.connect();
+                    this.db = this.mongoClient.db(this.config.dbName);
+                    
+                    // Test connection with a simple ping
+                    await this.db.admin().ping();
+                    console.log('✅ MongoDB connected successfully');
+                    break;
+                } catch (error) {
+                    lastError = error;
+                    retryCount++;
+                    
+                    if (error.message.includes('SSL') || error.message.includes('TLS') || error.message.includes('TLSV1')) {
+                        console.warn(`⚠️ SSL/TLS error on attempt ${retryCount}/${maxRetries}`);
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                    } else {
+                        throw error;
+                    }
+                }
+            }
+
+            if (retryCount >= maxRetries && lastError) {
+                console.warn(`⏭️  MongoDB unavailable, falling back to local database`);
+                global.useLocalDB = true;
+                this.isInitialized = true;
+                return;
+            }
+            
+            // Initialize Gemini AI if available
+            if (this.config.geminiApiKey) {
+                this.genAI = new GoogleGenerativeAI(this.config.geminiApiKey);
+                this.model = this.genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+            }
             
             // Create collections
             await this.createCollections();
@@ -80,8 +137,8 @@ class EnhancedYukiPlugin {
             
             this.isInitialized = true;
         } catch (error) {
-            console.error('Error initializing Enhanced يوكي:', error);
-            throw error;
+            console.warn('⏭️  Skipping Enhanced يوكي due to initialization error');
+            this.isInitialized = true; // Mark as initialized to prevent retries
         }
     }
 
