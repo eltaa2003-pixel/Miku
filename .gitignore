@@ -45,13 +45,11 @@ dist/
 # Database and session files
 database.json
 jadibts/
+MyninoSession/
 
 # Environment variables
 .env
-# Database and session files
-database.json
-MyninoSession/
-jadibts/
+.env.*
 # OS files
 .DS_Store
 Thumbs.db
