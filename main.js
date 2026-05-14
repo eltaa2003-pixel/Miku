@@ -50,6 +50,8 @@ const {DisconnectReason, useMultiFileAuthState, MessageRetryMap, fetchLatestBail
 const {CONNECTING} = ws;
 const {chain} = lodash;
 let conn;
+let reconnectTimer = null;
+let resetTimer = null;
 
 // Initialize error handler
 await errorHandler.initialize();
@@ -221,6 +223,36 @@ conn = global.conn;
 conn.isInit = false;
 conn.well = false;
 conn.logger.info(`Loading...\n`);
+
+function sendProcessMessage(message) {
+  if (typeof process.send === 'function') {
+    process.send(message);
+  }
+}
+
+function scheduleProcessReset(delayMs = 3000) {
+  if (resetTimer) return;
+  resetTimer = setTimeout(() => {
+    resetTimer = null;
+    sendProcessMessage('reset');
+  }, delayMs);
+}
+
+function scheduleReconnect(delayMs) {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    try {
+      await global.reloadHandler(true);
+      global.timestamp.connect = new Date();
+    } catch (error) {
+      if (!process.env.ELTA_CHILD_PROCESS) {
+        console.log(chalk.yellow('Reconnect failed:', error.message));
+      }
+      scheduleProcessReset(3000);
+    }
+  }, delayMs);
+}
 
 // Enhanced session management function with proper encryption key handling
 const handleSessionCreation = async (jid) => {
@@ -662,6 +694,10 @@ async function connectionUpdate(update) {
   if (connection === 'open') {
     global.reconnectAttempts = 0;
     global.startTime = Date.now();
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     
     if (!process.env.ELTA_CHILD_PROCESS) {
       console.log(chalk.green('✅ Successfully connected to WhatsApp'));
@@ -755,20 +791,13 @@ async function connectionUpdate(update) {
         if (!process.env.ELTA_CHILD_PROCESS) {
           console.log(chalk.red(`Connection error: ${code}. Attempting to reconnect (${reconnectAttempts})...`));
         }
-        setTimeout(async () => {
-          try {
-            await global.reloadHandler(true);
-            global.timestamp.connect = new Date();
-          } catch (error) {
-            // Handle error silently
-          }
-        }, Math.min(30000, 2000 * reconnectAttempts));
+        scheduleReconnect(Math.min(30000, 2000 * reconnectAttempts));
       } else {
         if (!process.env.ELTA_CHILD_PROCESS) {
           console.log(chalk.red('Max reconnect attempts reached. Resetting session...'));
         }
         cleanupSession();
-        process.send('reset');
+        scheduleProcessReset(1000);
       }
       return;
     }
@@ -777,9 +806,7 @@ async function connectionUpdate(update) {
       cleanupSession();
     }
     
-    setTimeout(() => {
-      process.send('reset');
-    }, 3000);
+    scheduleProcessReset(3000);
   }
 }
 
@@ -789,6 +816,15 @@ let isShuttingDown = false;
 function cleanup() {
   if (isShuttingDown) return;
   isShuttingDown = true;
+
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (resetTimer) {
+    clearTimeout(resetTimer);
+    resetTimer = null;
+  }
   
   if (global.conn) {
     try {
@@ -807,16 +843,16 @@ function cleanup() {
 // Simple signal handlers for cleanup only (process manager handles exit)
 process.on('SIGTERM', () => {
   if (!isShuttingDown) {
-    isShuttingDown = true;
     cleanup();
   }
+  setTimeout(() => process.exit(0), 500);
 });
 
 process.on('SIGINT', () => {
   if (!isShuttingDown) {
-    isShuttingDown = true;
     cleanup();
   }
+  setTimeout(() => process.exit(0), 500);
 });
 
 process.on('uncaughtException', (err) => {
