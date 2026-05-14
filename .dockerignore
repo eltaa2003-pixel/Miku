@@ -1,4 +1,13 @@
 node_modules
 auth_info_multi
 .DS_Store
-.git 
+.git
+.env
+database.json
+MyninoSession
+session-backup
+downloads
+tmp
+db
+jadibts
+*.log

@@ -1,8 +1,6 @@
 import { generateWAMessageFromContent, jidDecode } from 'baileys-pro';
-import demotePkg from './plugins/تخفيض.cjs';
-const handleDemotionEvent = demotePkg.handleDemotionEvent;
-import promotePkg from './plugins/promote.cjs';
-const handlePromotionEvent = promotePkg.handlePromotionEvent;
+import { handleDemotionEvent } from './plugins/تخفيض.js';
+import { handlePromotionEvent } from './plugins/promote.js';
 import privateBlocker, { handlePrivateMessage } from './lib/private-blocker.js';
 import { addToQueue, startQueue } from './lib/commandQueue.js';
 import path from 'path';

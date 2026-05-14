@@ -163,4 +163,32 @@ handler.admin = true;
 handler.botAdmin = true;
 handler.fail = null;
 
+export async function handleDemotionEvent(sock, groupId, participants, author) {
+    try {
+        const demotedUsernames = participants.map(jid => `@${jid.split('@')[0]}`);
+        let demotedBy;
+        const mentionList = [...participants];
+
+        if (author && author.length > 0 && author !== sock.user.id) {
+            demotedBy = `@${author.split('@')[0]}`;
+            mentionList.push(author);
+        } else {
+            demotedBy = 'System (WhatsApp did not provide the admin info)';
+        }
+
+        const demotionMessage = `*ã€Ž GROUP DEMOTION ã€*\n\n` +
+            `ðŸ‘¤ *Demoted User${participants.length > 1 ? 's' : ''}:*\n` +
+            `${demotedUsernames.map(name => `â€¢ ${name}`).join('\n')}\n\n` +
+            `ðŸ‘‘ *Demoted By:* ${demotedBy}\n\n` +
+            `ðŸ“… *Date:* ${new Date().toLocaleString()}`;
+
+        await sock.sendMessage(groupId, {
+            text: demotionMessage,
+            mentions: mentionList
+        });
+    } catch (error) {
+        console.error('Error handling demotion event:', error);
+    }
+}
+
 export default handler;

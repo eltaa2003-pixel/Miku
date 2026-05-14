@@ -24,10 +24,12 @@ class EnhancedYukiPlugin {
         
         this.db = null;
         this.genAI = null;
+        this.model = null;
         this.isInitialized = false;
         this.lastMessageIds = new Map();
         this.watchedFiles = new Map(); // For code monitoring
         this.audioHandler = null; // Audio search and download
+        this.localCache = new Map();
         
         // Emotional states
         this.emotionalStates = {
@@ -57,6 +59,9 @@ class EnhancedYukiPlugin {
 
     async initialize() {
         try {
+            this.initializeGemini();
+            this.initializeAudioHandler();
+
             // Skip MongoDB initialization if using local DB
             if (process.env.USE_LOCAL_DB === 'true' || global.useLocalDB) {
                 console.log('⏭️  Skipping MongoDB initialization (using local database)');
@@ -117,23 +122,11 @@ class EnhancedYukiPlugin {
                 return;
             }
             
-            // Initialize Gemini AI if available
-            if (this.config.geminiApiKey) {
-                this.genAI = new GoogleGenerativeAI(this.config.geminiApiKey);
-                this.model = this.genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-            }
-            
             // Create collections
             await this.createCollections();
             
             // Initialize code monitoring
             await this.initializeCodeMonitoring();
-            
-            // Initialize audio handler
-            this.audioHandler = new AudioHandler({
-                youtubeApiKey: this.config.youtubeApiKey,
-                downloadPath: './downloads/audio'
-            });
             
             this.isInitialized = true;
         } catch (error) {
@@ -142,7 +135,30 @@ class EnhancedYukiPlugin {
         }
     }
 
+    initializeGemini() {
+        if (!this.config.geminiApiKey) {
+            console.warn('Yuki Gemini disabled: GEMINI_API_KEY is not set.');
+            return;
+        }
+
+        this.genAI = new GoogleGenerativeAI(this.config.geminiApiKey);
+        this.model = this.genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || 'gemini-1.5-flash' });
+    }
+
+    initializeAudioHandler() {
+        this.audioHandler = new AudioHandler({
+            youtubeApiKey: this.config.youtubeApiKey,
+            downloadPath: './downloads/audio'
+        });
+    }
+
+    hasDatabase() {
+        return Boolean(this.db);
+    }
+
     async createCollections() {
+        if (!this.hasDatabase()) return;
+
         const collections = [
             'users', 'conversations', 'learning_data', 'emotional_context',
             'search_history', 'media_cache', 'code_monitoring'
@@ -179,6 +195,8 @@ class EnhancedYukiPlugin {
 
     async handleFileChange(filename, curr, prev) {
         if (curr.mtime !== prev.mtime) {
+            if (!this.hasDatabase()) return;
+
             const changeInfo = {
                 filename,
                 timestamp: new Date(),
@@ -500,6 +518,14 @@ class EnhancedYukiPlugin {
     }
 
     async storeAudioResults(userId, results) {
+        if (!this.hasDatabase()) {
+            this.localCache.set(`audio:${userId}`, {
+                results,
+                expiresAt: Date.now() + 30 * 60 * 1000
+            });
+            return;
+        }
+
         try {
             await this.db.collection('media_cache').updateOne(
                 { userId, type: 'audio' },
@@ -518,6 +544,11 @@ class EnhancedYukiPlugin {
     }
 
     async getStoredAudioResults(userId) {
+        if (!this.hasDatabase()) {
+            const cached = this.localCache.get(`audio:${userId}`);
+            return cached && cached.expiresAt > Date.now() ? cached.results : null;
+        }
+
         try {
             const cached = await this.db.collection('media_cache').findOne({
                 userId,
@@ -534,6 +565,10 @@ class EnhancedYukiPlugin {
 
     async handleCodeCommand(action, userId) {
         try {
+            if (!this.hasDatabase()) {
+                return 'ميزة مراقبة الكود تحتاج MongoDB. باقي أوامر يوكي شغالة عادي.';
+            }
+
             if (action === 'status' || action === 'حالة') {
                 const recentChanges = await this.db.collection('code_monitoring')
                     .find({})
@@ -733,6 +768,10 @@ Give a SHORT response (max 3-4 lines):
 
 Keep it simple and sweet, no long explanations!`;
 
+           if (!this.model) {
+               return `*شرح إضافة "${pluginName}":*\nميزة شرح الإضافات تحتاج GEMINI_API_KEY. الإضافة موجودة وأوامرها هي:\n${commands.map(command => `• ${command}`).join('\n') || '• ما قدرت استخرج أوامر واضحة'}`;
+           }
+
            const result = await this.model.generateContent(prompt);
            const description = result.response.text().trim();
 
@@ -745,6 +784,14 @@ Keep it simple and sweet, no long explanations!`;
    }
 
    async storePluginList(userId, files) {
+       if (!this.hasDatabase()) {
+           this.localCache.set(`plugin_list:${userId}`, {
+               results: files,
+               expiresAt: Date.now() + 10 * 60 * 1000
+           });
+           return;
+       }
+
        await this.db.collection('media_cache').updateOne(
            { userId, type: 'plugin_list' },
            {
@@ -759,6 +806,11 @@ Keep it simple and sweet, no long explanations!`;
    }
 
    async getStoredPluginList(userId) {
+       if (!this.hasDatabase()) {
+           const cached = this.localCache.get(`plugin_list:${userId}`);
+           return cached && cached.expiresAt > Date.now() ? cached.results : null;
+       }
+
        const cached = await this.db.collection('media_cache').findOne({
            userId,
            type: 'plugin_list',
@@ -812,6 +864,8 @@ Keep it simple and sweet, no long explanations!`;
    }
 
     async saveSearchHistory(userId, query, type, resultCount) {
+        if (!this.hasDatabase()) return;
+
         try {
             // Use insertOne with minimal data and don't wait for completion
             this.db.collection('search_history').insertOne({
@@ -855,6 +909,15 @@ Keep it simple and sweet, no long explanations!`;
     }
 
     async getUserContext(userId) {
+        if (!this.hasDatabase()) {
+            return {
+                user: { userId, personality: {}, learningData: {} },
+                recentConversations: [],
+                emotionalContext: { state: this.emotionalStates.NEUTRAL, intensity: 0 },
+                recentSearches: []
+            };
+        }
+
         try {
             // Parallel database queries for better performance
             const [user, recentConversations, emotionalContext, recentSearches] = await Promise.all([
@@ -917,6 +980,10 @@ ${conversationHistory}
 ردّ بلبناني قصير وذكي:`;
 
         try {
+            if (!this.model) {
+                return 'يوكي شغالة، بس الدردشة الذكية محتاجة GEMINI_API_KEY بالـ .env. اكتبي ".يوكي مساعدة" للأوامر المتاحة.';
+            }
+
             const result = await this.model.generateContent(fullPrompt);
             let response = result.response.text().trim();
             
@@ -1045,6 +1112,8 @@ ${conversationHistory}
     }
 
     async initializeUser(userId) {
+        if (!this.hasDatabase()) return;
+
         const existingUser = await this.db.collection('users').findOne({ userId });
         
         if (!existingUser) {
@@ -1067,6 +1136,8 @@ ${conversationHistory}
     }
 
     async saveInteraction(userId, userMessage, yukiResponse, messageId) {
+        if (!this.hasDatabase()) return;
+
         try {
             // Batch operations for better performance - fire and forget
             const operations = [
@@ -1102,6 +1173,8 @@ ${conversationHistory}
     }
 
     async updateLearningData(userId, userMessage, yukiResponse) {
+        if (!this.hasDatabase()) return;
+
         const keywords = this.extractKeywords(userMessage);
         
         if (keywords.length > 0) {
@@ -1127,6 +1200,8 @@ ${conversationHistory}
     }
 
     async updateEmotionalContext(userId, state, intensity) {
+        if (!this.hasDatabase()) return;
+
         await this.db.collection('emotional_context').updateOne(
             { userId },
             {
@@ -1162,11 +1237,6 @@ let enhancedYukiInstance = null;
 let yukiInitPromise = null;
 
 async function ensureEnhancedYukiInitialized() {
-    // Graceful degradation: skip Yuki if MongoDB URI is not configured
-    if (!process.env.MONGODB_URI) {
-      console.warn('⚠️ Yuki plugin skipped: MONGODB_URI is not set in .env');
-      return;
-    }
     if (!enhancedYukiInstance) {
         enhancedYukiInstance = new EnhancedYukiPlugin({
             mongoUrl: process.env.MONGODB_URI,

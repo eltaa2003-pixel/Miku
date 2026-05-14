@@ -143,4 +143,32 @@ handler.admin = true;
 handler.botAdmin = true;
 handler.fail = null;
 
+export async function handlePromotionEvent(sock, groupId, participants, author) {
+    try {
+        const promotedUsernames = participants.map(jid => `@${jid.split('@')[0]}`);
+        let promotedBy;
+        const mentionList = [...participants];
+
+        if (author && author.length > 0 && author !== sock.user.id) {
+            promotedBy = `@${author.split('@')[0]}`;
+            mentionList.push(author);
+        } else {
+            promotedBy = 'System (WhatsApp did not provide the admin info)';
+        }
+
+        const promotionMessage = `*ã€Ž GROUP PROMOTION ã€*\n\n` +
+            `ðŸ‘¥ *Promoted User${participants.length > 1 ? 's' : ''}:*\n` +
+            `${promotedUsernames.map(name => `â€¢ ${name}`).join('\n')}\n\n` +
+            `ðŸ‘‘ *Promoted By:* ${promotedBy}\n\n` +
+            `ðŸ“… *Date:* ${new Date().toLocaleString()}`;
+
+        await sock.sendMessage(groupId, {
+            text: promotionMessage,
+            mentions: mentionList
+        });
+    } catch (error) {
+        console.error('Error handling promotion event:', error);
+    }
+}
+
 export default handler; 

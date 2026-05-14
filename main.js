@@ -42,17 +42,14 @@ import renderSessionManager, { initializeRenderSession } from './render-config.j
 import { scheduleDailyBackup } from './lib/autoBackup.js';
 import errorHandler from './lib/error-handler.js';
 
-// FIXED IMPORTS FOR COMMONJS MODULES
-import promotePkg from './plugins/promote.cjs';
-const { promoteCommand, handlePromotionEvent } = promotePkg;
-
-import demotePkg from './plugins/تخفيض.cjs';
-const { demoteCommand, handleDemotionEvent } = demotePkg;
+import { handlePromotionEvent } from './plugins/promote.js';
+import { handleDemotionEvent } from './plugins/تخفيض.js';
 
 const {proto} = (await import('baileys-pro')).default;
 const {DisconnectReason, useMultiFileAuthState, MessageRetryMap, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, isJidBroadcast} = await import('baileys-pro');
 const {CONNECTING} = ws;
 const {chain} = lodash;
+let conn;
 
 // Initialize error handler
 await errorHandler.initialize();
@@ -77,6 +74,7 @@ global.videoListXXX = [];
 const __dirname = global.__dirname(import.meta.url);
 
 global.opts = new Object(yargs(process.argv.slice(2)).exitProcess(false).parse());
+const opts = global.opts;
 global.prefix = new RegExp('^[' + (opts['prefix'] || '*/i!#$%+£¢€¥^°=¶∆×÷π√✓©®:;?&.\\-.@aA').replace(/[|\\{}()[\]^$+*?.\-\^]/g, '\\$&') + ']');
 
 const defaultData = {
@@ -160,6 +158,8 @@ loadChatgptDB();
 
 global.authFile = `MyninoSession`;
 // Don't clean up session files on startup - they contain encryption keys
+const enableProactiveSessions = process.env.ENABLE_PROACTIVE_SESSIONS === 'true';
+const sessionRefreshIntervalMs = Number(process.env.SESSION_REFRESH_INTERVAL_MS || 30 * 60 * 1000);
 
 // Initialize Render session management before creating auth state
 await initializeRenderSession();
@@ -190,14 +190,14 @@ const connectionOptions = {
     creds: state.creds,
     keys: makeCacheableSignalKeyStore(state.keys, pino({level: 'silent'})),
   },
-  // Simplified browser identification
-  browser: ['Chrome (Linux)', '', ''],
+  // Updated browser identification
+  browser: ['Ubuntu', 'Chrome', '124.0.0.0'],
   version,
   defaultQueryTimeoutMs: 60_000,
   // Session management options
   syncFullHistory: false,
-  markOnlineOnConnect: false,
-  fireInitQueries: false,
+  markOnlineOnConnect: true,
+  fireInitQueries: true,
   generateHighQualityLinkPreview: false,
   emitOwnEvents: false,
   // Add connection timeout
@@ -217,6 +217,7 @@ const connectionOptions = {
 };
 
 global.conn = makeWASocket(connectionOptions);
+conn = global.conn;
 conn.isInit = false;
 conn.well = false;
 conn.logger.info(`Loading...\n`);
@@ -372,6 +373,13 @@ global.forceSessionRefresh = async (jid) => {
 // Enhanced proactive session management with encryption key handling
 const initializeSessionManagement = async () => {
   try {
+    if (!enableProactiveSessions) {
+      if (!process.env.ELTA_CHILD_PROCESS) {
+        console.log(chalk.cyan('Proactive session refresh disabled. Using on-demand WhatsApp sessions.'));
+      }
+      return;
+    }
+
     // Get all chats to establish sessions - use the correct method
     const chats = await conn.getChats ? await conn.getChats() : [];
     // If getChats is not available, we'll rely on dynamic session creation
@@ -390,7 +398,7 @@ const initializeSessionManagement = async () => {
         } catch (error) {
           // Silent error handling
         }
-      }, 300000); // Refresh every 5 minutes (less aggressive)
+      }, sessionRefreshIntervalMs);
       return;
     }
     
@@ -462,7 +470,7 @@ const initializeSessionManagement = async () => {
       } catch (error) {
         // Silent error handling
       }
-    }, 120000); // Refresh every 2 minutes (more aggressive)
+    }, sessionRefreshIntervalMs);
     
   } catch (error) {
     // Silent error handling
@@ -849,6 +857,7 @@ global.reloadHandler = async function(restatConn) {
     
     conn.ev.removeAllListeners();
     global.conn = makeWASocket(connectionOptions, {chats: oldChats});
+    conn = global.conn;
     isInit = true;
   }
   

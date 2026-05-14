@@ -55,13 +55,10 @@
     "ytdl-core": "^4.11.5"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node index.js",
-    "start:stable": "node start.js",
     "start:pm2": "pm2 start index.js --name elta-md --no-autorestart --watch",
     "install-ffmpeg": "bash install-ffmpeg.sh",
-    "setup-ffmpeg": "node setup-ffmpeg.js",
-    "test-ffmpeg": "node test-ffmpeg.js"
+    "setup-ffmpeg": "node setup-ffmpeg.js"
   },
   "keywords": [],
   "author": "",
