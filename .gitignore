@@ -47,9 +47,11 @@ database.json
 jadibts/
 
 # Environment variables
-
-# WhatsApp session files
-
+.env
+# Database and session files
+database.json
+MyninoSession/
+jadibts/
 # OS files
 .DS_Store
 Thumbs.db
