@@ -1,10 +1,19 @@
 import express from 'express';
 const app = express();
 const PORT = process.env.PORT || process.env.SERVER_PORT || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
 app.get('/', (req, res) => res.send('Bot is running!'));
-app.listen(PORT, () => {
-  if (!process.env.ELTA_CHILD_PROCESS) {
-    console.log(`Web server listening on port ${PORT}`);
+app.get('/healthz', (req, res) => {
+  res.status(200).json({
+    ok: true,
+    service: 'elta-md',
+    whatsapp: global.conn?.user ? 'connected' : 'starting',
+    uptime: Math.floor(process.uptime()),
+  });
+});
+app.listen(PORT, HOST, () => {
+  if (!process.env.ELTA_CHILD_PROCESS || process.env.RENDER_EXTERNAL_URL) {
+    console.log(`Web server listening on ${HOST}:${PORT}`);
   }
 });
 // Only disable TLS if absolutely necessary

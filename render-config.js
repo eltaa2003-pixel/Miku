@@ -11,6 +11,11 @@ import chalk from 'chalk';
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID;
 const RENDER_SERVICE_NAME = process.env.RENDER_SERVICE_NAME;
+const KEEP_RENDER_AWAKE = process.env.KEEP_RENDER_AWAKE === 'true';
+const RENDER_KEEPALIVE_INTERVAL_MS = Math.max(
+  Number(process.env.RENDER_KEEPALIVE_INTERVAL_MS || 10 * 60 * 1000),
+  60 * 1000
+);
 
 // Session directory configuration
 const SESSION_DIR = './MyninoSession';
@@ -27,6 +32,7 @@ class RenderSessionManager {
     this.lastBackup = 0;
     this.backupInterval = 30 * 60 * 1000; // 30 minutes
     this.shutdownInProgress = false;
+    this.keepAliveInterval = null;
   }
 
   /**
@@ -51,6 +57,9 @@ class RenderSessionManager {
     
     // Set up graceful shutdown
     this.setupGracefulShutdown();
+
+    // Optional keepalive for Render Free web services.
+    this.setupKeepAlive();
     
     console.log(chalk.green('✅ Render session management initialized'));
   }
@@ -111,12 +120,12 @@ class RenderSessionManager {
   /**
    * Create session backup
    */
-  async createBackup() {
-    if (this.shutdownInProgress) return;
+  async createBackup({ force = false } = {}) {
+    if (this.shutdownInProgress && !force) return false;
     
     try {
       const { readdirSync, existsSync } = await import('fs');
-      if (!existsSync(this.sessionDir)) return;
+      if (!existsSync(this.sessionDir)) return false;
       
       const files = readdirSync(this.sessionDir);
       const backupData = {
@@ -151,11 +160,36 @@ class RenderSessionManager {
    * Set up periodic backup
    */
   setupPeriodicBackup() {
-    setInterval(async () => {
+    const interval = setInterval(async () => {
       if (Date.now() - this.lastBackup > this.backupInterval) {
         await this.createBackup();
       }
     }, 5 * 60 * 1000); // Check every 5 minutes
+    interval.unref?.();
+  }
+
+  /**
+   * Optional self-ping to prevent Render Free idle spin-down.
+   */
+  setupKeepAlive() {
+    if (!this.isRender || !KEEP_RENDER_AWAKE) return;
+
+    const url = `${RENDER_EXTERNAL_URL.replace(/\/$/, '')}/healthz`;
+    console.log(chalk.cyan(`Render keepalive enabled: pinging ${url} every ${Math.round(RENDER_KEEPALIVE_INTERVAL_MS / 60000)} minutes`));
+
+    this.keepAliveInterval = setInterval(async () => {
+      try {
+        const response = await fetch(url, {
+          headers: { 'user-agent': 'elta-render-keepalive' },
+        });
+        if (!response.ok) {
+          console.log(chalk.yellow(`Render keepalive returned ${response.status}`));
+        }
+      } catch (error) {
+        console.log(chalk.yellow(`Render keepalive failed: ${error.message}`));
+      }
+    }, RENDER_KEEPALIVE_INTERVAL_MS);
+    this.keepAliveInterval.unref?.();
   }
 
   /**
@@ -169,7 +203,11 @@ class RenderSessionManager {
       console.log(chalk.yellow(`\n🛑 Received ${signal}, creating final backup...`));
       
       try {
-        await this.createBackup();
+        if (this.keepAliveInterval) {
+          clearInterval(this.keepAliveInterval);
+          this.keepAliveInterval = null;
+        }
+        await this.createBackup({ force: true });
         console.log(chalk.green('✅ Final backup completed'));
       } catch (error) {
         console.error(chalk.red('❌ Error during final backup:', error.message));
