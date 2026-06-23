@@ -44,6 +44,7 @@ import errorHandler from './lib/error-handler.js';
 import {makeWASocket, protoType, serialize} from './lib/simple.js';
 import { Low } from 'lowdb';
 import { JSONFile } from 'lowdb/node';
+import qrcode from 'qrcode-terminal';
 
 
 
