@@ -1,13 +1,28 @@
 import fs from 'fs';
 
-const dataPath = './plugins/ta3-data.json';
-let questionsAndAnswers = [];
+// Time helpers
+const formatElapsed = (ms) => {
+  if (!ms || ms <= 0) return '0s';
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+};
 
-// Helper function to normalize Arabic text variations
-const normalizeForMatching = (text) => {
-  if (typeof text !== 'string') return '';
-  // Treat ج, غ, and ق as the same character (g) for matching purposes
-  return text.trim().toLowerCase().replace(/[جغق]/g, 'g').replace(/\s+/g, ' ');
+const updateTimeStats = (stats, jid, elapsedMs) => {
+  if (!stats[jid]) stats[jid] = { best: Infinity, total: 0, count: 0 };
+  const s = stats[jid];
+  s.count += 1;
+  s.total += elapsedMs;
+  if (elapsedMs < s.best) s.best = elapsedMs;
+};
+
+let gameState = {
+  active: false,
+  currentQuestion: '',
+  responses: {},
+  playerCorrectAnswers: {},
+  questionStartTime: 0,
+  answeredBy: [],
+  timeStats: {}
 };
 
 // Helper function to remove duplicates from answer lists based on normalization
@@ -132,15 +147,6 @@ const saveQuestions = () => {
 loadQuestions();
 
 let handler = m => m;
-
-let gameState = {
-  active: false,
-  currentQuestion: '',
-  responses: {},
-  playerCorrectAnswers: {},
-  questionStartTime: 0,
-  answeredBy: []
-};
 
 async function isAdmin(m, conn) {
   if (!m.isGroup) return false;
@@ -305,12 +311,12 @@ const startGame = async (m) => {
   gameState.responses = {};
   gameState.playerCorrectAnswers = {};
   gameState.answeredBy = [];
+  gameState.timeStats = {};
   
   let randomIndex = Math.floor(Math.random() * questionsAndAnswers.length);
   gameState.currentQuestion = questionsAndAnswers[randomIndex].question;
-  gameState.questionStartTime = Date.now();
-  
-  await m.reply(`*${gameState.currentQuestion} 3/تع*`);
+  const sent = await m.reply(`*${gameState.currentQuestion} 3/تع*`);
+  gameState.questionStartTime = (sent && sent.messageTimestamp) ? sent.messageTimestamp * 1000 : Date.now();
 };
 
 const stopGame = async (m) => {
@@ -324,7 +330,9 @@ const stopGame = async (m) => {
     await m.reply('لم يربح أحد نقاطاً في هذه اللعبة.');
   } else {
     let result = Object.entries(gameState.responses).map(([jid, points]) => {
-      return `@${jid.split('@')[0]}: ${points} نقطة`;
+      const stats = gameState.timeStats[jid];
+      const timeText = stats ? ` ⏱️ ${formatElapsed(stats.best)} (م: ${formatElapsed(Math.round(stats.total / stats.count))})` : '';
+      return `@${jid.split('@')[0]}: ${points} نقطة${timeText}`;
     }).join('\n');
 
     await m.reply(`اللعبة انتهت!\n\nالنقاط:\n${result}`, null, {
@@ -338,7 +346,6 @@ const stopGame = async (m) => {
 const nextQuestion = async (m) => {
   gameState.playerCorrectAnswers = {};
   gameState.answeredBy = [];
-  gameState.questionStartTime = Date.now();
   
   if (questionsAndAnswers.length === 0) {
     gameState.active = false;
@@ -349,7 +356,8 @@ const nextQuestion = async (m) => {
   gameState.currentQuestion = questionsAndAnswers[randomIndex].question;
   
   setTimeout(async () => {
-    await m.reply(`*${gameState.currentQuestion} 3/تع*`);
+    const sent = await m.reply(`*${gameState.currentQuestion} 3/تع*`);
+    gameState.questionStartTime = (sent && sent.messageTimestamp) ? sent.messageTimestamp * 1000 : Date.now();
   }, 500);
 };
 
@@ -397,9 +405,11 @@ const checkAnswer = async (m) => {
   });
   
   const correctCount = gameState.playerCorrectAnswers[userJid].size;
+  const newCorrect = userAnswers.filter(answer => normalizedCorrectAnswers.includes(answer)).length;
+  
   console.log('🎯 Total correct answers for user:', correctCount);
   
-  if (correctCount >= 3) {
+  if (correctCount >= 3 && !gameState.answeredBy.includes(userJid)) {
     console.log('🎉 User got 3+ correct answers! Giving point...');
     gameState.answeredBy.push(userJid);
     if (!gameState.responses[userJid]) {
@@ -408,8 +418,16 @@ const checkAnswer = async (m) => {
       gameState.responses[userJid] += 1;
     }
     
-    // Silent success - no message, just proceed to next question
-    nextQuestion(m);
+    const elapsed = (m.messageTimestamp * 1000) - gameState.questionStartTime;
+    updateTimeStats(gameState.timeStats, userJid, elapsed);
+    const stats = gameState.timeStats[userJid];
+    const isNewBest = stats && elapsed <= stats.best;
+    const timeText = `\n⏱️ وقت إجابتك: ${formatElapsed(elapsed)}` + (isNewBest ? ' 🏅' : ` (أفضل: ${formatElapsed(stats.best)})`);
+    await m.reply(`✅ +1 نقطة لـ @${userJid.split('@')[0]}${timeText}`);
+    
+    setTimeout(() => {
+      nextQuestion(m);
+    }, 1000);
   } else {
     console.log('⏳ User needs more correct answers. Current:', correctCount);
   }

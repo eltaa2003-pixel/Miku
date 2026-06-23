@@ -40,19 +40,13 @@ import syntaxerror from 'syntax-error';
 import {tmpdir} from 'os';
 import {format} from 'util';
 import pino from 'pino';
+import errorHandler from './lib/error-handler.js';
 import {makeWASocket, protoType, serialize} from './lib/simple.js';
 import { Low } from 'lowdb';
 import { JSONFile } from 'lowdb/node';
-import cloudDBAdapter from './lib/cloudDBAdapter.js';
-import store from './lib/store.js';
-import qrcode from 'qrcode-terminal';
-import encryptionManager, { handleEncryptionError } from './lib/encryption-manager.js';
-import renderSessionManager, { initializeRenderSession } from './render-config.js';
-import { scheduleDailyBackup } from './lib/autoBackup.js';
-import errorHandler from './lib/error-handler.js';
 
-import { handlePromotionEvent } from './plugins/promote.js';
-import { handleDemotionEvent } from './plugins/تخفيض.js';
+
+
 
 const {proto} = (await import('baileys-pro')).default;
 const {DisconnectReason, useMultiFileAuthState, MessageRetryMap, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, isJidBroadcast} = await import('baileys-pro');
@@ -98,9 +92,7 @@ const defaultData = {
 };
 
 global.db = new Low(
-  /https?:\/\//.test(opts['db'] || '') 
-    ? new cloudDBAdapter(opts['db']) 
-    : new JSONFile(`${opts._[0] ? opts._[0] + '_' : ''}database.json`),
+  new JSONFile(`${opts._[0] ? opts._[0] + '_' : ''}database.json`),
   defaultData
 );
 
@@ -173,7 +165,7 @@ const enableProactiveSessions = process.env.ENABLE_PROACTIVE_SESSIONS === 'true'
 const sessionRefreshIntervalMs = Number(process.env.SESSION_REFRESH_INTERVAL_MS || 30 * 60 * 1000);
 
 // Initialize Render session management before creating auth state
-await initializeRenderSession();
+
 
 const {state, saveState, saveCreds} = await useMultiFileAuthState(global.authFile);
 
@@ -714,8 +706,7 @@ async function connectionUpdate(update) {
       console.log(chalk.cyan(`📱 Phone: ${conn.user?.id || 'Unknown'}`));
     }
 
-    // Schedule daily backups
-    scheduleDailyBackup(conn, 2);
+  // Schedule daily backups skipped (lib removed)
 
     // Check for restart flag file
     if (existsSync('./restart.json')) {
@@ -740,14 +731,7 @@ async function connectionUpdate(update) {
       }
     }
     
-    // Initialize encryption key manager
-    encryptionManager.initialize().then(() => {
-      encryptionManager.logKeyStats();
-    }).catch(error => {
-      console.error(chalk.red('❌ Failed to initialize encryption manager:', error.message));
-    });
-    
-    // Initialize proactive session management after connection
+
     setTimeout(() => {
       initializeSessionManagement();
     }, 5000); // Wait 5 seconds after connection to ensure everything is ready
@@ -955,14 +939,7 @@ global.reloadHandler = async function(restatConn) {
         }
         
         if (jid) {
-          console.log(chalk.yellow(`🔧 Attempting recovery for JID: ${jid} ${messageInfo}`));
-          const recovered = await handleEncryptionError(error, jid);
-          
-          if (recovered) {
-            console.log(chalk.green(`✅ Successfully recovered session for ${jid}`));
-          } else {
-            console.log(chalk.red(`❌ Failed to recover session for ${jid}`));
-          }
+          console.log(chalk.yellow(`🔧 Recovery skipped for JID: ${jid} ${messageInfo}`));
         } else {
           console.log(chalk.red('❌ Could not extract JID from error context'));
         }
@@ -1008,29 +985,7 @@ global.reloadHandler = async function(restatConn) {
   return true;
 };
 
-async function handleGroupParticipantUpdate(sock, update) {
-    if (!process.env.ELTA_CHILD_PROCESS) {
-        console.log('Group participant update:', JSON.stringify(update, null, 2));
-    }
-    try {
-        const { id, participants, action, author } = update;
-        // Check if it's a group
-        if (!id.endsWith('@g.us')) return;
-        // Handle promotion events
-        if (action === 'promote') {
-            await handlePromotionEvent(sock, id, participants, author);
-            return;
-        }
-        // Handle demotion events
-        if (action === 'demote') {
-            await handleDemotionEvent(sock, id, participants, author);
-            return;
-        }
-        // ... you can add more group participant event handling here if needed ...
-    } catch (err) {
-        console.error('Error in handleGroupParticipantUpdate:', err);
-    }
-}
+
 
 const pluginFolder = join(__dirname, './plugins');
 // Only load .js files from the plugins folder (exclude .cjs files as they're handled separately)

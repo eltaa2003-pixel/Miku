@@ -46,6 +46,21 @@ async function isAdmin(m, conn) {
     }
 }
 
+// WPM helpers
+const formatElapsed = (ms) => {
+  if (!ms || ms <= 0) return '0s';
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+};
+
+const updateTimeStats = (stats, jid, elapsedMs) => {
+  if (!stats[jid]) stats[jid] = { best: Infinity, total: 0, count: 0 };
+  const s = stats[jid];
+  s.count += 1;
+  s.total += elapsedMs;
+  if (elapsedMs < s.best) s.best = elapsedMs;
+};
+
 function getGameState(chatId) {
     if (!gameStates[chatId]) {
         gameStates[chatId] = {
@@ -54,7 +69,9 @@ function getGameState(chatId) {
             nameCount: 1,
             responses: {},
             playerProgress: {},
-            lastResponseTime: 0
+            lastResponseTime: 0,
+            roundStartTime: 0,
+            wpmStats: {}
         };
     }
     return gameStates[chatId];
@@ -181,10 +198,13 @@ handler.all = async function(m, { conn }) {
             gameState.playerProgress = {};
             gameState.currentNames = getRandomNames(requestedCount);
             gameState.lastResponseTime = Date.now();
+            gameState.roundStartTime = Date.now();
+            gameState.timeStats = {};
             
             // Display names with spaces between them
             const nameDisplay = gameState.currentNames.join(' ');
-            await m.reply(`*${nameDisplay}*`);
+            const sent = await m.reply(`*${nameDisplay}*`);
+            gameState.roundStartTime = (sent && sent.messageTimestamp) ? sent.messageTimestamp * 1000 : Date.now();
             
         } else if (/^\.تست (.+)$/i.test(m.text)) {
             // Debug command to test matching
@@ -212,7 +232,9 @@ handler.all = async function(m, { conn }) {
                 await m.reply('لم يربح أحد نقاطاً في هذه اللعبة.');
             } else {
                 let result = Object.entries(gameState.responses).map(([jid, points]) => {
-                    return `@${jid.split('@')[0]}: ${points} نقطة`;
+                    const stats = gameState.timeStats[jid];
+                    const timeText = stats ? ` ⏱️ ${formatElapsed(stats.best)} (م: ${formatElapsed(Math.round(stats.total / stats.count))})` : '';
+                    return `@${jid.split('@')[0]}: ${points} نقطة${timeText}`;
                 }).join('\n');
 
                 await m.reply(`اللعبة انتهت!\n\nالنقاط:\n${result}`, null, {
@@ -251,12 +273,18 @@ handler.all = async function(m, { conn }) {
                         gameState.responses[m.sender] += 1;
                     }
 
+                    const elapsed = (m.messageTimestamp * 1000) - gameState.roundStartTime;
+                    updateTimeStats(gameState.timeStats, m.sender, elapsed);
+                    const stats = gameState.timeStats[m.sender];
+                    const isNewBest = stats && elapsed <= stats.best;
+                    const timeText = ` ⏱️ ${formatElapsed(elapsed)}` + (isNewBest ? ' 🏅' : ` (أفضل: ${formatElapsed(stats.best)})`);
+                    
                     // Reset progress and show new names
                     gameState.playerProgress = {};
                     gameState.currentNames = getRandomNames(gameState.nameCount);
-            
                     const nameDisplay = gameState.currentNames.join(' ');
-                    await m.reply(`*${nameDisplay}*`);
+                    const sent = await m.reply(`*${nameDisplay}*${timeText}`);
+                    gameState.roundStartTime = (sent && sent.messageTimestamp) ? sent.messageTimestamp * 1000 : Date.now();
                 } else {
                     // Player found some names but not all - no feedback needed
                     // Removed the "found X out of Y names" message

@@ -3,14 +3,47 @@ import { canLevelUp, xpRange } from '../lib/levelling.js';
 let handler = m => m;
 
 let currentCount = 1; 
+// WPM helpers
+const calculateWPM = (text, elapsedMs) => {
+  if (!elapsedMs || elapsedMs <= 0) return 0;
+  const minutes = elapsedMs / 60000;
+  const words = text.replace(/[^\p{L}\p{N}]/gu, '').length / 5;
+  if (minutes <= 0) return 0;
+  return Math.round(words / minutes);
+};
+
+const updateWpmStats = (stats, jid, wpm) => {
+  if (!stats[jid]) stats[jid] = { best: 0, total: 0, count: 0 };
+  const s = stats[jid];
+  s.count += 1;
+  s.total += wpm;
+  if (wpm > s.best) s.best = wpm;
+};
+
+// Time helpers
+const formatElapsed = (ms) => {
+  if (!ms || ms <= 0) return '0s';
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+};
+
+const updateTimeStats = (stats, jid, elapsedMs) => {
+  if (!stats[jid]) stats[jid] = { best: Infinity, total: 0, count: 0 };
+  const s = stats[jid];
+  s.count += 1;
+  s.total += elapsedMs;
+  if (elapsedMs < s.best) s.best = elapsedMs;
+};
+
 let gameState = {
     active: false,
     currentQuestionIndex: -1,
     responses: {},
-    playerAttempts: {}, // Track all player attempts for current question
+    playerAttempts: {},
+    allPlayerMessages: {},
     questionStartTime: 0,
-    answeredBy: null, // Track who answered correctly first
-    allPlayerMessages: {} // Track all messages from players during active question
+    answeredBy: null,
+    timeStats: {}
 };
 
 // This is the new function I added
@@ -257,18 +290,21 @@ const startGame = async (m) => {
     gameState.responses = {};
     gameState.playerAttempts = {};
     gameState.allPlayerMessages = {};
+    gameState.timeStats = {};
     nextQuestion(m);
 };
 
 const stopGame = async (m) => {
     if (!gameState.active) return; // Silent - no reply
     gameState.active = false;
-    
+
     if (Object.keys(gameState.responses).length === 0) {
         // Silent - no reply about no winners
     } else {
         let result = Object.entries(gameState.responses).map(([jid, points]) => {
-            return `@${jid.split('@')[0]}: ${points} نقطة`;
+            const stats = gameState.timeStats[jid];
+            const timeText = stats ? ` ⏱️ ${formatElapsed(stats.best)} (م: ${formatElapsed(Math.round(stats.total / stats.count))})` : '';
+            return `@${jid.split('@')[0]}: ${points} نقطة${timeText}`;
         }).join('\n');
         
         await m.reply(`اللعبة انتهت!\n\nالنقاط:\n${result}`, null, {
@@ -296,10 +332,10 @@ const nextQuestion = async (m) => {
     gameState.playerAttempts = {};
     gameState.allPlayerMessages = {};
     gameState.answeredBy = null;
-    gameState.questionStartTime = Date.now();
     
     gameState.currentQuestionIndex = Math.floor(Math.random() * gameData.length);
-    await m.reply(`*س/${gameData[gameState.currentQuestionIndex].question}*`);
+    const sent = await m.reply(`*س/${gameData[gameState.currentQuestionIndex].question}*`);
+    gameState.questionStartTime = (sent && sent.messageTimestamp) ? sent.messageTimestamp * 1000 : Date.now();
 };
 
 const extractPossibleAnswers = (text) => {
@@ -321,7 +357,7 @@ const checkAnswer = async (m) => {
     const currentQuestion = gameData[gameState.currentQuestionIndex];
     const correctAnswers = currentQuestion.answers.map(answer => normalizeForMatching(answer));
     const userJid = m.sender;
-    const messageTime = Date.now();
+    const messageTime = (m.messageTimestamp || Math.floor(Date.now() / 1000));
     
     // Track this player's message
     if (!gameState.allPlayerMessages[userJid]) {
@@ -352,9 +388,14 @@ const checkAnswer = async (m) => {
             return;
         }
         
+        const elapsed = (m.messageTimestamp * 1000) - gameState.questionStartTime;
+        updateTimeStats(gameState.timeStats, userJid, elapsed);
+        
         // This is the first correct answer
         gameState.answeredBy = userJid;
         gameState.responses[userJid] = (gameState.responses[userJid] || 0) + 1;
+        
+        await m.reply(`✅ إجابة صحيحة! ⏱️ ${formatElapsed(elapsed)}`);
         
         // Silent success - no message, just proceed to next question
         setTimeout(() => {
@@ -396,6 +437,9 @@ const checkForCorrections = async (m) => {
         if (matchedAnswer && gameState.answeredBy === null) {
             gameState.answeredBy = userJid;
             gameState.responses[userJid] = (gameState.responses[userJid] || 0) + 1;
+            
+            const elapsed = Date.now() - gameState.questionStartTime;
+            updateTimeStats(gameState.timeStats, userJid, elapsed);
             
             // Silent success for correction - no message, just proceed to next question
             setTimeout(() => {

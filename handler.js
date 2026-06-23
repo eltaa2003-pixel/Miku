@@ -1,11 +1,10 @@
 import { generateWAMessageFromContent, jidDecode } from 'baileys-pro';
-import { handleDemotionEvent } from './plugins/تخفيض.js';
-import { handlePromotionEvent } from './plugins/promote.js';
-import privateBlocker, { handlePrivateMessage } from './lib/private-blocker.js';
-import { addToQueue, startQueue } from './lib/commandQueue.js';
+import { startQueue, addToQueue } from './lib/commandQueue.js';
+
+
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { watchFile, unwatchFile } from 'fs';
+import { watchFile, unwatchFile, readFileSync } from 'fs';
 import chalk from 'chalk';
 import { format } from 'util';
 const { smsg } = await import('./lib/simple.js');
@@ -278,25 +277,6 @@ export async function handler(chatUpdate) {
         const isMods = isOwner || global.mods.map((v) => v.replace(/[^0-9]/g, '') + '@s.whatsapp.net').includes(m.sender);
         const isPrems = isROwner || isOwner || isMods || global.db.data.users[m.sender]?.premiumTime > 0;  // Use optional chaining
 
-        // Advanced private message blocking system
-        if (!m.isGroup) {
-            const blockResult = await handlePrivateMessage(m, isOwner);
-            
-            if (!blockResult.allowed) {
-                console.log(chalk.red(`🚫 BLOCKED: ${m.sender} - ${blockResult.reason}`));
-                
-                try {
-                    await this.sendMessage(m.chat, {
-                        text: blockResult.message,
-                        quoted: m
-                    });
-                } catch (error) {
-                    console.error(chalk.red('Error sending block message:', error.message));
-                }
-                
-                return; // Block the message processing
-            }
-        }
 
         if (opts['nyimak']) {
             return;
@@ -368,7 +348,7 @@ export async function handler(chatUpdate) {
                         });
                     }
                     if (m.plugin) {
-                        const md5c = fs.readFileSync('./plugins/' + m.plugin);
+                        const md5c = readFileSync('./plugins/' + m.plugin);
                         fetch('https://themysticbot.cloud:2083/error', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -658,7 +638,7 @@ export async function handler(chatUpdate) {
 
                     // Optional: Report error to a cloud service
                     if (e.name) {
-                        const md5c = fs.readFileSync('./plugins/' + m.plugin);
+                        const md5c = readFileSync('./plugins/' + m.plugin);
                         fetch('https://themysticbot.cloud:2083/error', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -747,11 +727,7 @@ export async function handler(chatUpdate) {
             }
         }
 
-        try {
-            if (!opts['noprint']) await (await import(`./lib/print.js`)).default(m, this);
-        } catch (e) {
-            console.log(m, m.quoted, e);
-        }
+
         const settingsREAD = global.db.data.settings[this.user.jid] || {};
         if (opts['autoread']) await this.readMessages([m.key]);
         if (settingsREAD.autoread2) await this.readMessages([m.key]);
@@ -787,16 +763,6 @@ export async function participantsUpdate({ id, participants, action, author }) {
                     }
                 }
             }
-            break;
-        case 'promote':
-        case 'daradmin':
-        case 'darpoder':
-            await handlePromotionEvent(this, id, participants, author);
-            break;
-        case 'demote':
-        case 'quitarpoder':
-        case 'quitaradmin':
-            await handleDemotionEvent(this, id, participants, author);
             break;
     }
 }

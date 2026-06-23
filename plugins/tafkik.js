@@ -1,11 +1,28 @@
 import { canLevelUp, xpRange } from '../lib/levelling.js';
 
+// Time helpers
+const formatElapsed = (ms) => {
+  if (!ms || ms <= 0) return '0s';
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+};
+
+const updateTimeStats = (stats, jid, elapsedMs) => {
+  if (!stats[jid]) stats[jid] = { best: Infinity, total: 0, count: 0 };
+  const s = stats[jid];
+  s.count += 1;
+  s.total += elapsedMs;
+  if (elapsedMs < s.best) s.best = elapsedMs;
+};
+
 let handler = m => m;
 
 let gameState = {
     active: false,
     currentName: '',
-    responses: {} // { jid: points }
+    responses: {},
+    questionStartTime: 0,
+    timeStats: {}
 };
 
 const names = [
@@ -44,9 +61,11 @@ handler.all = async function(m, { conn }) {
 
         gameState.active = true;
         gameState.responses = {}; // Reset responses
+        gameState.timeStats = {};
         let randomIndex = Math.floor(Math.random() * names.length);
         gameState.currentName = names[randomIndex];
-        await m.reply(`*${gameState.currentName}*`);
+        const sent = await m.reply(`*${gameState.currentName}*`);
+        gameState.questionStartTime = (sent && sent.messageTimestamp) ? sent.messageTimestamp * 1000 : Date.now();
     } else if (/^\.ستف$/i.test(m.text)) {
         if (!gameState.active) {
             return m.reply('لا توجد لعبة قيد التشغيل حالياً.');
@@ -58,7 +77,9 @@ handler.all = async function(m, { conn }) {
             await m.reply('لم يربح أحد نقاطاً في هذه اللعبة.');
         } else {
             let result = Object.entries(gameState.responses).map(([jid, points]) => {
-                return `@${jid.split('@')[0]}: ${points} نقطة`;
+                const stats = gameState.timeStats[jid];
+                const timeText = stats ? ` ⏱️ ${formatElapsed(stats.best)} (م: ${formatElapsed(Math.round(stats.total / stats.count))})` : '';
+                return `@${jid.split('@')[0]}: ${points} نقطة${timeText}`;
             }).join('\n');
 
             await m.reply(`اللعبة انتهت!\n\nالنقاط:\n${result}`, null, {
@@ -79,9 +100,16 @@ handler.all = async function(m, { conn }) {
                 gameState.responses[m.sender] += 1;
             }
 
+            const elapsed = (m.messageTimestamp * 1000) - gameState.questionStartTime;
+            updateTimeStats(gameState.timeStats, m.sender, elapsed);
+            const stats = gameState.timeStats[m.sender];
+            const isNewBest = stats && elapsed <= stats.best;
+            const timeText = ` ⏱️ ${formatElapsed(elapsed)}` + (isNewBest ? ' 🏅' : ` (أفضل: ${formatElapsed(stats.best)})`);
+
             let randomIndex = Math.floor(Math.random() * names.length);
             gameState.currentName = names[randomIndex];
-            await m.reply(`*${gameState.currentName}*`); // Give the next name
+            const sent = await m.reply(`*${gameState.currentName}*${timeText}`);
+            gameState.questionStartTime = (sent && sent.messageTimestamp) ? sent.messageTimestamp * 1000 : Date.now();
         }
     }
 };
