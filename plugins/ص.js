@@ -11,16 +11,16 @@ let handler = async (m, { conn }) => {
   // STOP
   if (/^\.سص$/.test(cmd)) {
     if (!gameState[chat] || !gameState[chat].active) {
-      return m.reply('❌ ما في لعبة شغالة.');
+      return m.reply(' ما في لعبة شغالة.');
     }
     gameState[chat] = { active: false };
-    return m.reply('🛑 توقفت اللعبة.');
+    return m.reply('وقفنا');
   }
 
   // START
   if (/^\.مص$/.test(cmd)) {
     if (gameState[chat]?.active) {
-      return m.reply('⚠️ اللعبة شغالة خلص.');
+      return m.reply(' اللعبة شغالة .');
     }
     gameState[chat] = { active: true };
     return await sendQuestion(m, conn, chat);
@@ -63,19 +63,10 @@ async function sendQuestion(m, conn, chat) {
       questionStartTime: Date.now()
     };
 
-    await conn.sendMessage(
-      chat,
-      {
-        image: Buffer.from(imageResponse.data),
-        mimetype: contentType,
-        caption: '🖼️ من هذا؟'
-      },
-      { quoted: m }
-    );
 
   } catch (error) {
     console.error('Image fetch/send error:', error.message);
-    await m.reply('❌ فشل في جلب الصورة. يرجى المحاولة مرة أخرى.');
+    await m.reply(' فشلتك يا ايلتا اعذرني لا تمحيني بليز');
   }
 }
 
