@@ -1,7 +1,6 @@
 import axios from 'axios';
 
-const IMAGE_LIST_URL = 'https://raw.githubusercontent.com/Seiyra/imagesfjsfasfa/refs/heads/main/okay.js';
-
+const IMAGE_LIST_URL = 'https://raw.githubusercontent.com/eltaa2003-pixel/Miku/main/images.json';
 let gameState = {};
 
 let handler = async (m, { conn }) => {
@@ -22,7 +21,6 @@ let handler = async (m, { conn }) => {
     if (gameState[chat]?.active) {
       return m.reply(' اللعبة شغالة .');
     }
-    gameState[chat] = { active: true };
     return await sendQuestion(m, conn, chat);
   }
 };
@@ -57,6 +55,13 @@ async function sendQuestion(m, conn, chat) {
     const contentType = imageResponse.headers['content-type'] || 'image/jpeg';
     if (!contentType.startsWith('image/')) throw new Error(`Not an image (${contentType}).`);
 
+    const imageBuffer = Buffer.from(imageResponse.data);
+    await conn.sendMessage(chat, {
+      image: imageBuffer,
+      mimetype: contentType,
+      caption: ''
+    }, { quoted: m });
+
     gameState[chat] = {
       active: true,
       answer: rawAnswer,
@@ -80,6 +85,7 @@ handler.all = async function (m) {
 
   const userAnswer = m.text.trim().toLowerCase();
   const rawAnswer = gameState[chat].answer;
+  if (!rawAnswer) return;
   const answers = Array.isArray(rawAnswer)
     ? rawAnswer.map(a => a.toLowerCase())
     : [rawAnswer.toLowerCase()];
