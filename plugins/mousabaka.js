@@ -1,51 +1,11 @@
 import fs   from 'fs';
 import axios from 'axios';
 
-// ════════════════════════════════════════════════════════════════════════════
-//  مسابقة  —  Full Auto-Judged Points Competition
-//
-//  .مسابقة <target>   start  (target max 30, default 10)
-//  .سمسابقة           stop early
-//
-//  Phase system  (milestones based on highest score in the room):
-//    Phase 1 →  start … first player hits 5 pts
-//    Phase 2 →  5 pts  … first player hits 10 pts
-//    Phase 3 →  10 pts … winner
-//
-//  The 3 game modes (SINGLE, MULTI, NAMES) are shuffled randomly at the
-//  start of each competition and assigned one-per-phase, so the order
-//  is never the same twice.
-//
-//  SINGLE  — سس style: one correct answer, first to type it wins
-//  MULTI   — ta3 style: question with multiple correct answers,
-//             first to accumulate any 3 of them wins the round
-//  NAMES   — masabik style: bot shows N names, first player to name
-//             all of them wins the round
-//             Name count probabilities per round:
-//               2 names  → 35 %
-//               3 names  → 40 %
-//               4 names  → 15 %
-//               5–7 names→ 10 %  (uniform across 5,6,7)
-//
-//  Spam filter:
-//    • Message < 3 chars → ignored
-//    • Pure digits / symbols / emoji → ignored
-//    • Same user, identical text, within 1.5 s → ignored
-//    • Commands (starts with .) → ignored
-// ════════════════════════════════════════════════════════════════════════════
-
-// ─── Data ────────────────────────────────────────────────────────────────────
-
 const DATA_PATH      = './plugins/game-data.json';
-const IMAGE_LIST_URL = 'https://raw.githubusercontent.com/Seiyra/imagesfjsfasfa/refs/heads/main/okay.js';
+const IMAGE_LIST_URL = 'https://raw.githubusercontent.com/eltaa2003-pixel/Miku/main/images.json';
 
 global.mousabakaBotSettings = global.mousabakaBotSettings || {};
 const BOT_JID = 'يوت@e.whatsapp.net';
-const BOT_LABELS = {
-  easy:   'سهل',
-  medium: 'متوسط',
-  hard:   'صعب',
-};
 
 let _gameData = {};
 
@@ -92,16 +52,14 @@ Object.assign(global.mousabakaBotHelpers, {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const MODES         = ['SINGLE', 'MULTI', 'NAMES'];
-const PHASE_TRIGGER = [5, 10];   // score milestones that advance the phase
+const MODES         = ['SINGLE', 'MULTI', 'NAMES', 'IMAGE'];
+const PHASE_TRIGGER = [5, 10, 15];
 
-// Name-count probability table
-// Each entry: [count, cumulative_weight]
 const NAME_COUNT_TABLE = [
   { count: 2, weight: 35 },
   { count: 3, weight: 40 },
   { count: 4, weight: 15 },
-  { count: 5, weight: 10 / 3 },   // ≈3.33 % each for 5,6,7
+  { count: 5, weight: 10 / 3 },
   { count: 6, weight: 10 / 3 },
   { count: 7, weight: 10 / 3 },
 ];
@@ -116,7 +74,7 @@ function pickNameCount() {
   return 3;
 }
 
-// ─── Text normalization (copied from master.js) ───────────────────────────────
+// ─── Text normalization ───────────────────────────────────────────────────────
 
 const normalizeForMatching = (text) => {
   if (typeof text !== 'string') return '';
@@ -163,7 +121,7 @@ function arabicToEnglish(str) {
   return str.replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
 }
 
-// ─── Time helpers ──────────────────────────────────────────────────────────────
+// ─── Time helpers ─────────────────────────────────────────────────────────────
 
 function formatElapsed(ms) {
   if (!ms || ms <= 0) return '0s';
@@ -191,49 +149,6 @@ function getTimeBadge(jid, comp) {
 
 // ─── Chat state ────────────────────────────────────────────────────────────────
 
-/**
- * State shape:
- * {
- *   active:          boolean
- *   targetScore:     number
- *   phaseOrder:      ['SINGLE','NAMES','MULTI']  (randomized per competition)
- *   currentPhase:    0 | 1 | 2
- *   scores:          { jid: number }
- *   phasesTriggered: Set of milestone values already fired
- *
- *   // current round
- *   roundMode:       'SINGLE' | 'MULTI' | 'NAMES'
- *   roundLocked:     boolean   (true while transitioning / posting next Q)
- *
- *   // SINGLE round state
- *   single: {
- *     question:   string
- *     answers:    string[]      (normalized)
- *     answeredBy: null | jid
- *   }
- *
- *   // MULTI round state
- *   multi: {
- *     question:      string
- *     answers:       string[]   (normalized, all correct)
- *     playerSets:    { jid: Set<string> }   (normalized answers already found)
- *     answeredBy:    null | jid
- *   }
- *
- *   // NAMES round state
- *   names: {
- *     currentNames:   string[]
- *     playerProgress: { jid: Set<string> }
- *     answeredBy:     null | jid
- *   }
- *
-  *   // spam tracking
-  *   lastMsg: { jid: { text, time } }
-  *   roundStartTime: number
-  *   timeStats: { jid: { best, total, count } }
-  * }
- */
-
 let compStates = {};
 
 function getComp(chatId) {
@@ -241,7 +156,6 @@ function getComp(chatId) {
 }
 
 function createComp(chatId, targetScore) {
-  // Shuffle the 3 modes randomly
   const order = [...MODES].sort(() => Math.random() - 0.5);
   const botConfig = getBotConfig(chatId);
 
@@ -258,6 +172,7 @@ function createComp(chatId, targetScore) {
     single:          null,
     multi:           null,
     names:           null,
+    image:           null,
     lastMsg:         {},
     botEnabled:      false,
     botDifficulty:   botConfig.difficulty,
@@ -280,14 +195,8 @@ function destroyComp(chatId) {
 function isSpam(text) {
   if (!text || typeof text !== 'string') return true;
   const t = text.trim();
-
-  // Too short
   if (t.length < 2) return true;
-
-  // Must contain at least one Unicode letter or number (Arabic, Latin, etc.)
-  // \p{L} covers all Unicode letters including Arabic — this is the correct check
   if (!/[\p{L}]/u.test(t)) return true;
-
   return false;
 }
 
@@ -323,18 +232,19 @@ function topScore(scores) {
 
 // ─── Phase management ─────────────────────────────────────────────────────────
 
-// Returns the phase index (0,1,2) the competition should be in given highest score
 function targetPhase(highScore) {
+  if (highScore >= PHASE_TRIGGER[2]) return 3;
   if (highScore >= PHASE_TRIGGER[1]) return 2;
   if (highScore >= PHASE_TRIGGER[0]) return 1;
   return 0;
 }
 
-const PHASE_NAMES = ['المرحلة الأولى', 'المرحلة الثانية', 'المرحلة الثالثة'];
+const PHASE_NAMES = ['المرحلة الأولى', 'المرحلة الثانية', 'المرحلة الثالثة', 'المرحلة الرابعة'];
 const MODE_LABELS = {
-  SINGLE: 'سس',
+  SINGLE: 'س',
   MULTI:  'تع',
-  NAMES:  'كت',
+  NAMES:  'أسماء',
+  IMAGE:  'صورة',
 };
 
 // ─── Question helpers ─────────────────────────────────────────────────────────
@@ -378,10 +288,10 @@ async function postNextRound(comp, chatId, conn, m) {
   const mode = comp.phaseOrder[comp.currentPhase];
   comp.roundMode = mode;
 
-  // Reset round sub-state
   comp.single = null;
   comp.multi  = null;
   comp.names  = null;
+  comp.image  = null;
 
   try {
     if (mode === 'SINGLE') {
@@ -392,7 +302,7 @@ async function postNextRound(comp, chatId, conn, m) {
         answers:    q.answers.map(a => normalizeForMatching(a)),
         answeredBy: null,
       };
-      const sent = await conn.sendMessage(chatId, { text: `❓ *${q.question}*` });
+      const sent = await conn.sendMessage(chatId, { text: `س/\n*${q.question}*` });
       comp.roundStartTime = (sent.messageTimestamp || Date.now()) * 1000;
 
     } else if (mode === 'MULTI') {
@@ -404,7 +314,7 @@ async function postNextRound(comp, chatId, conn, m) {
         playerSets: {},
         answeredBy: null,
       };
-      const sent = await conn.sendMessage(chatId, { text: `📚 *${q.question}*\n_(أذكر 3 إجابات صحيحة)_` });
+      const sent = await conn.sendMessage(chatId, { text: `تع/3\n*${q.question}*` });
       comp.roundStartTime = (sent.messageTimestamp || Date.now()) * 1000;
 
     } else if (mode === 'NAMES') {
@@ -415,8 +325,34 @@ async function postNextRound(comp, chatId, conn, m) {
         playerProgress: {},
         answeredBy:     null,
       };
-      const sent = await conn.sendMessage(chatId, { text: `🎴 *${names.join('  |  ')}*` });
+      const sent = await conn.sendMessage(chatId, { text: names.join('  |  ') });
       comp.roundStartTime = (sent.messageTimestamp || Date.now()) * 1000;
+
+    } else if (mode === 'IMAGE') {
+      try {
+        const listRes = await axios.get(IMAGE_LIST_URL, { timeout: 5000 });
+        const entries = Object.entries(listRes.data);
+        if (!entries.length) throw new Error('empty');
+        const [url, rawAnswer] = entries[Math.floor(Math.random() * entries.length)];
+        const imgRes = await axios.get(url, { responseType: 'arraybuffer', timeout: 15000 });
+        const contentType = imgRes.headers['content-type'] || 'image/jpeg';
+        const buffer = Buffer.from(imgRes.data);
+        comp.image = {
+          answer:     Array.isArray(rawAnswer)
+                        ? rawAnswer.map(a => a.toLowerCase())
+                        : [rawAnswer.toLowerCase()],
+          answeredBy: null,
+        };
+        const sent = await conn.sendMessage(chatId, {
+          image:    buffer,
+          mimetype: contentType,
+          caption:  '',
+        });
+        comp.roundStartTime = (sent.messageTimestamp || Date.now()) * 1000;
+      } catch (err) {
+        await conn.sendMessage(chatId, { text: '⚠️ فشل تحميل الصورة.' });
+        return;
+      }
     }
   } finally {
     comp.roundLocked = false;
@@ -431,8 +367,9 @@ function randomBetween(min, max) {
 function isRoundDecided(comp) {
   const mode = comp.roundMode;
   if (mode === 'SINGLE') return comp.single && comp.single.answeredBy;
-  if (mode === 'MULTI') return comp.multi && comp.multi.answeredBy;
-  if (mode === 'NAMES') return comp.names && comp.names.answeredBy;
+  if (mode === 'MULTI')  return comp.multi  && comp.multi.answeredBy;
+  if (mode === 'NAMES')  return comp.names  && comp.names.answeredBy;
+  if (mode === 'IMAGE')  return comp.image  && comp.image.answeredBy;
   return true;
 }
 
@@ -480,18 +417,26 @@ function scheduleBotAnswer(comp, chatId, conn) {
           await awardPoint(comp, chatId, conn, BOT_JID);
         }
       }
+
+      if (mode === 'IMAGE' && comp.image && !comp.image.answeredBy) {
+        const answer = comp.image.answer[0];
+        await conn.sendMessage(chatId, { text: `🤖 يوت: ${answer}` });
+        if (!comp.image.answeredBy) {
+          comp.image.answeredBy = BOT_JID;
+          await awardPoint(comp, chatId, conn, BOT_JID);
+        }
+      }
+
     } catch (err) {
       console.error('[مسابقة] AI answer error:', err);
     }
   }, delay);
 }
 
-// ─── Award point + check milestones + post next round ────────────────────────
+// ─── Award point ──────────────────────────────────────────────────────────────
 
 async function awardPoint(comp, chatId, conn, winnerJid, winnerMsg, winnerElapsed = 0) {
   if (!comp.active) return;
-
-  // Lock immediately so no second winner sneaks in
   if (comp.roundLocked) return;
   comp.roundLocked = true;
 
@@ -501,31 +446,30 @@ async function awardPoint(comp, chatId, conn, winnerJid, winnerMsg, winnerElapse
   const mentions = boardMentions(comp.scores);
   const high     = topScore(comp.scores);
 
-  // ── Check win condition ───────────────────────────────────────────────────
   if (newScore >= comp.targetScore) {
     const num = winnerJid.split('@')[0];
     destroyComp(chatId);
-    const timeText = winnerElapsed ? `\n⏱️ وقت إجابتك: ${formatElapsed(winnerElapsed)}` : '';
+    const timeText  = winnerElapsed ? `\n⏱️ ${formatElapsed(winnerElapsed)}` : '';
     const timeStats = comp.timeStats[winnerJid];
-    const statsText = timeStats ? `\n📊 أفضل وقت: ${formatElapsed(timeStats.best)} (متوسط: ${formatElapsed(Math.round(timeStats.total / timeStats.count))})` : '';
+    const statsText = timeStats
+      ? `\n📊 أفضل: ${formatElapsed(timeStats.best)} (م: ${formatElapsed(Math.round(timeStats.total / timeStats.count))})`
+      : '';
     await conn.sendMessage(chatId, {
-      text: `🏆 *@${num} فاز بالمسابقة بـ ${newScore} نقطة!* 🎉\n\n📊 *النتائج النهائية:*\n${board}${timeText}${statsText}`,
+      text: `🏆 *@${num} فاز بـ ${newScore} فنش!*\n\n${board}${timeText}${statsText}`,
       mentions: [...new Set([...mentions, winnerJid])],
     }, { quoted: winnerMsg });
     return;
   }
 
-  // ── Announce the point (reply to the winning message) ────────────────────
-  const displayName = winnerJid.includes('@e.whatsapp.net') ? '🤖 يوت' : `@${winnerJid.split('@')[0]}`;
+  const displayName    = winnerJid.includes('@e.whatsapp.net') ? '🤖 يوت' : `@${winnerJid.split('@')[0]}`;
   const mentionsForMsg = winnerJid.includes('@e.whatsapp.net') ? [] : [winnerJid];
-  const timeLine = winnerElapsed ? `\n⏱️ وقت إجابتك: ${formatElapsed(winnerElapsed)}` : '';
-  const timeBadge = winnerElapsed ? getTimeBadge(winnerJid, comp) : '';
+  const timeLine       = winnerElapsed ? ` ⏱️ ${formatElapsed(winnerElapsed)}` : '';
+  const timeBadge      = winnerElapsed ? getTimeBadge(winnerJid, comp) : '';
   await conn.sendMessage(chatId, {
-    text: `✅ +1 نقطة لـ ${displayName}${timeLine}${timeBadge}\n\n📊 *النقاط:*\n${board}`,
+    text: `✅ ${displayName} +1${timeLine}${timeBadge}\n\n${board}`,
     mentions: mentionsForMsg,
   }, { quoted: winnerMsg });
 
-  // ── Check phase milestone ─────────────────────────────────────────────────
   const needed = targetPhase(high);
   if (needed > comp.currentPhase) {
     comp.currentPhase = needed;
@@ -533,19 +477,16 @@ async function awardPoint(comp, chatId, conn, winnerJid, winnerMsg, winnerElapse
     const label = PHASE_NAMES[comp.currentPhase];
     const mlab  = MODE_LABELS[mode];
     await delay(600);
-    await conn.sendMessage(chatId, {
-      text: `*${label} بدأت!*\nنمط اللعب الآن: ${mlab}`,
-    });
+    await conn.sendMessage(chatId, { text: `*${label}* — ${mlab}` });
     await delay(800);
   } else {
     await delay(600);
   }
 
-  // ── Post next round ───────────────────────────────────────────────────────
   await postNextRound(comp, chatId, conn, winnerMsg);
 }
 
-// ─── Answer checkers (one per mode) ──────────────────────────────────────────
+// ─── Answer checkers ──────────────────────────────────────────────────────────
 
 async function checkSingle(comp, chatId, conn, m) {
   if (!comp.single || comp.single.answeredBy) return;
@@ -589,7 +530,7 @@ async function checkMulti(comp, chatId, conn, m) {
 
   const displayName = jid.includes('@e.whatsapp.net') ? '🤖 يوت' : `@${jid.split('@')[0]}`;
   await conn.sendMessage(chatId, {
-    text: `✅ ${displayName} وجد إجابة صحيحة (${playerSet.size}/3)! ⏱️ ${formatElapsed(elapsed)}`,
+    text: `✅ ${displayName} (${playerSet.size}/3)`,
     mentions: [jid],
   });
 }
@@ -618,16 +559,27 @@ async function checkNames(comp, chatId, conn, m) {
   }
 
   const displayName = jid.includes('@e.whatsapp.net') ? '🤖 يوت' : `@${jid.split('@')[0]}`;
-  const progress = comp.names.playerProgress[jid];
-  const found = progress ? progress.size : 0;
-  const total = comp.names.currentNames.length;
+  const progress    = comp.names.playerProgress[jid];
+  const found       = progress ? progress.size : 0;
+  const total       = comp.names.currentNames.length;
   await conn.sendMessage(chatId, {
-    text: `✅ ${displayName} وجد اسم (${found}/${total})! ⏱️ ${formatElapsed(elapsed)}`,
+    text: `✅ ${displayName} (${found}/${total})`,
     mentions: [jid],
   });
 }
 
-// Names progress logic (from master.js checkMasabikProgress)
+async function checkImage(comp, chatId, conn, m) {
+  if (!comp.image || comp.image.answeredBy) return;
+  const userAnswer = m.text.trim().toLowerCase();
+  if (!comp.image.answer.includes(userAnswer)) return;
+
+  const elapsed = (m.messageTimestamp * 1000) - comp.roundStartTime;
+  updateTimeStats(comp, m.sender, elapsed);
+
+  comp.image.answeredBy = m.sender;
+  await awardPoint(comp, chatId, conn, m.sender, m, elapsed);
+}
+
 function checkNamesProgress(userInput, currentNames, playerProgress, playerId) {
   const normalizedInput = normalizeArabicText(userInput).toLowerCase();
   if (!playerProgress[playerId]) playerProgress[playerId] = new Set();
@@ -674,7 +626,7 @@ async function startCompetition(m, conn, rawTarget) {
 
   if (getComp(chatId)) {
     return conn.sendMessage(chatId,
-      { text: '⚠️ يوجد مسابقة قيد التشغيل. اكتب *.سمسابقة* لإيقافها.' },
+      { text: '⚠️ في مسابقة شغالة. اكتب *.سمسابقة* لوقفها.' },
       { quoted: m }
     );
   }
@@ -687,19 +639,7 @@ async function startCompetition(m, conn, rawTarget) {
 
   const comp = createComp(chatId, target);
 
-  // Announce phase order
-  const phaseLines = comp.phaseOrder
-    .map((mode, i) => `${PHASE_NAMES[i]}: ${MODE_LABELS[mode]}`)
-    .join('\n');
-
-  await conn.sendMessage(chatId, {
-    text:
-      `🏆 *مسابقة جديدة!*\n` +
-      `🎯 الهدف: *${target}* نقطة\n\n` +
-      `📋 *ترتيب المراحل:*\n${phaseLines}\n\n` +
-      `تبدأ بعد...\n\n` +
-      `🤖 *بوت يوت:* سيبقى معطلًا حتى تفعّله بـ .يوت:هارد أو .يوت:ميديوم أو .يوت:سهل`,
-  });
+  await conn.sendMessage(chatId, { text: `🏆 *مسابقة!* ${target} فنش` });
 
   await delay(1000);
   await conn.sendMessage(chatId, { text: '3️⃣' });
@@ -720,23 +660,23 @@ async function stopCompetition(m, conn) {
 
   if (!comp) {
     return conn.sendMessage(chatId,
-      { text: 'لا توجد مسابقة قيد التشغيل حالياً.' },
+      { text: 'ما في مسابقة شغالة.' },
       { quoted: m }
     );
   }
 
   const hadScores = Object.keys(comp.scores).length > 0;
   const board     = buildBoard(comp.scores);
-  const mentions = Object.keys(comp.scores).filter(jid => !jid.includes('@e.whatsapp.net'));
+  const mentions  = Object.keys(comp.scores).filter(jid => !jid.includes('@e.whatsapp.net'));
 
   destroyComp(chatId);
 
   if (!hadScores) {
-    return conn.sendMessage(chatId, { text: '❌ انتهت المسابقة.\nلم يسجّل أحد أي نقطة.' });
+    return conn.sendMessage(chatId, { text: '❌ وقفت المسابقة.\nما سجّل أحد.' });
   }
 
   await conn.sendMessage(chatId, {
-    text: `*🏆 أُوقفت المسابقة!*\n\n*النتائج:*\n${board}`,
+    text: `❌ *وقفت المسابقة*\n\n${board}`,
     mentions,
   });
 }
@@ -774,23 +714,19 @@ handler.all = async function (m) {
   const chatId = m.chat;
 
   try {
-    // ── Passive answer processing during competition ─────────────────────
     const comp = getComp(chatId);
     if (!comp || !comp.active || comp.roundLocked) return !0;
 
-    // Ignore commands and empty messages
     if (!txt || txt.startsWith('.')) return !0;
-
-    // Spam filter
     if (isSpam(txt)) return !0;
     if (isRapidDupe(comp, m.sender, txt)) return !0;
     recordMsg(comp, m.sender, txt);
 
-    // Route to correct checker
     const mode = comp.roundMode;
     if      (mode === 'SINGLE') await checkSingle(comp, chatId, conn, m);
     else if (mode === 'MULTI')  await checkMulti(comp, chatId, conn, m);
     else if (mode === 'NAMES')  await checkNames(comp, chatId, conn, m);
+    else if (mode === 'IMAGE')  await checkImage(comp, chatId, conn, m);
 
   } catch (err) {
     console.error('[مسابقة] error:', err);
