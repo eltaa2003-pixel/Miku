@@ -188,6 +188,7 @@ function destroyComp(chatId) {
     compStates[chatId].active = false;
   }
   delete compStates[chatId];
+  _sendQueues.delete(chatId);
 }
 
 // ─── Spam filter ──────────────────────────────────────────────────────────────
@@ -465,7 +466,7 @@ async function awardPoint(comp, chatId, conn, winnerJid, winnerMsg, winnerElapse
   const mentionsForMsg = winnerJid.includes('@e.whatsapp.net') ? [] : [winnerJid];
   const timeLine       = winnerElapsed ? ` ⏱️ ${formatElapsed(winnerElapsed)}` : '';
   const timeBadge      = winnerElapsed ? getTimeBadge(winnerJid, comp) : '';
-  await conn.sendMessage(chatId, {
+  await safeSend(conn, chatId, {
     text: `✅ ${displayName} +1${timeLine}${timeBadge}\n\n${board}`,
     mentions: mentionsForMsg,
   }, { quoted: winnerMsg });
@@ -477,7 +478,7 @@ async function awardPoint(comp, chatId, conn, winnerJid, winnerMsg, winnerElapse
     const label = PHASE_NAMES[comp.currentPhase];
     const mlab  = MODE_LABELS[mode];
     await delay(600);
-    await conn.sendMessage(chatId, { text: `*${label}* — ${mlab}` });
+    await safeSend(conn, chatId, { text: `*${label}* — ${mlab}` });
     await delay(800);
   } else {
     await delay(600);
@@ -685,6 +686,19 @@ async function stopCompetition(m, conn) {
 
 function delay(ms) {
   return new Promise(r => setTimeout(r, ms));
+}
+
+// ─── Rate-safe send ───────────────────────────────────────────────────────────
+const _sendQueues = new Map();
+
+async function safeSend(conn, chatId, payload, opts) {
+  if (!_sendQueues.has(chatId)) _sendQueues.set(chatId, Promise.resolve());
+  const next = _sendQueues.get(chatId).then(async () => {
+    await delay(350);
+    return conn.sendMessage(chatId, payload, opts);
+  });
+  _sendQueues.set(chatId, next.catch(() => {}));
+  return next;
 }
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
