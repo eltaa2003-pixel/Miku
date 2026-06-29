@@ -1,10 +1,12 @@
 import fs   from 'fs';
 import axios from 'axios';
+import { fileURLToPath } from 'url';
+import path from 'path';
 import { cleanAnswerText, isExactCommand } from '../lib/answerCleaner.js';
-import { prepareWhatsAppImage } from '../lib/whatsappImage.js';
 
-const DATA_PATH      = './plugins/game-data.json';
-const IMAGE_LIST_URL = 'https://raw.githubusercontent.com/eltaa2003-pixel/Miku/main/images.json';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DATA_PATH = './plugins/game-data.json';
+const IMAGE_LIST_PATH = path.join(__dirname, '..', 'images.json');
 
 global.mousabakaBotSettings = global.mousabakaBotSettings || {};
 const BOT_JID = 'يوت@e.whatsapp.net';
@@ -95,6 +97,16 @@ const extractPossibleAnswersFull = (text) => {
   const parts = extractPossibleAnswers(text);
   const full  = normalizeForMatching(text);
   return [...new Set([full, ...parts])];
+};
+
+const extractImageAnswers = (text) => {
+  const cleaned = cleanAnswerText(text);
+  const parts = cleaned
+    .split(/[.,،؛:!؟\s\/\\|&+\-ـ]+/u)
+    .map(p => normalizeForMatching(p))
+    .filter(p => p.length > 0);
+  const full = normalizeForMatching(cleaned);
+  return [...new Set([full, ...parts].filter(Boolean))];
 };
 
 const deduplicateAnswers = (questions) =>
@@ -279,6 +291,20 @@ function pickNames() {
   return out;
 }
 
+function loadImageEntries() {
+  const data = JSON.parse(fs.readFileSync(IMAGE_LIST_PATH, 'utf8'));
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('images.json must be an object of imageUrl: answer.');
+  }
+
+  return Object.entries(data).filter(([url, answer]) => {
+    const answers = Array.isArray(answer) ? answer : [answer];
+    return typeof url === 'string' &&
+      url.startsWith('http') &&
+      answers.some(item => typeof item === 'string' && item.trim());
+  });
+}
+
 // ─── Round posting ────────────────────────────────────────────────────────────
 
 async function postNextRound(comp, chatId, conn, m) {
@@ -335,8 +361,7 @@ async function postNextRound(comp, chatId, conn, m) {
 
     } else if (mode === 'IMAGE') {
       try {
-        const listRes = await axios.get(IMAGE_LIST_URL, { timeout: 5000 });
-        const entries = Object.entries(listRes.data);
+        const entries = loadImageEntries();
         if (!entries.length) throw new Error('empty');
         const [url, rawAnswer] = entries[Math.floor(Math.random() * entries.length)];
         const imgRes = await axios.get(url, { responseType: 'arraybuffer', timeout: 15000 });
@@ -345,16 +370,17 @@ async function postNextRound(comp, chatId, conn, m) {
           throw new Error(`Not an image (${contentType}).`);
         }
         const buffer = Buffer.from(imgRes.data);
-        const preparedImage = await prepareWhatsAppImage(buffer);
+        const answers = Array.isArray(rawAnswer) ? rawAnswer : [rawAnswer];
         comp.image = {
-          answer:     Array.isArray(rawAnswer)
-                        ? rawAnswer.map(a => a.toLowerCase())
-                        : [rawAnswer.toLowerCase()],
+          answer:     answers
+                        .filter(answer => typeof answer === 'string' && answer.trim())
+                        .map(answer => normalizeForMatching(answer)),
           answeredBy: null,
         };
         const sent = await conn.sendMessage(chatId, {
-          ...preparedImage,
-          caption:  '',
+          image: buffer,
+          mimetype: contentType,
+          caption: '',
         });
         comp.roundStartTime = (sent.messageTimestamp || Date.now()) * 1000;
       } catch (err) {
@@ -578,8 +604,8 @@ async function checkNames(comp, chatId, conn, m) {
 
 async function checkImage(comp, chatId, conn, m) {
   if (!comp.image || comp.image.answeredBy) return;
-  const userAnswer = normalizeForMatching(m.text);
-  if (!comp.image.answer.includes(userAnswer)) return;
+  const userAnswers = extractImageAnswers(m.text);
+  if (!userAnswers.some(answer => comp.image.answer.includes(answer))) return;
 
   const elapsed = (m.messageTimestamp * 1000) - comp.roundStartTime;
   updateTimeStats(comp, m.sender, elapsed);

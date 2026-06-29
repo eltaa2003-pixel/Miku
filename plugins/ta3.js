@@ -1,6 +1,8 @@
 import fs from 'fs';
 import { cleanAnswerText } from '../lib/answerCleaner.js';
 
+const dataPath = './plugins/ta3-data.json';
+
 // Time helpers
 const formatElapsed = (ms) => {
   if (!ms || ms <= 0) return '0s';

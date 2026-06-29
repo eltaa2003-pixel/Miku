@@ -2,6 +2,7 @@ import axios from 'axios';
 import { readFile, stat } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { cleanAnswerText } from '../lib/answerCleaner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const IMAGE_LIST_PATH = path.join(__dirname, '..', 'images.json');
@@ -39,6 +40,7 @@ function normalizeAnswer(text) {
   return String(text || '')
     .trim()
     .toLowerCase()
+    .replace(/[جغق]/g, 'g')
     .replace(/\s+/g, ' ')
     .replace(/[ًٌٍَُِّْ]/g, '')
     .replace(/[أإآا]/g, 'ا')
@@ -46,6 +48,16 @@ function normalizeAnswer(text) {
     .replace(/ى/g, 'ي')
     .replace(/ؤ/g, 'و')
     .replace(/ئ/g, 'ي');
+}
+
+function getAnswerCandidates(text) {
+  const cleaned = cleanAnswerText(text);
+  const candidates = [
+    cleaned,
+    ...cleaned.split(/[.,،؛:!؟\s\/\\|&+\-ـ]+/u)
+  ];
+
+  return [...new Set(candidates.map(normalizeAnswer).filter(Boolean))];
 }
 
 async function loadImages() {
@@ -112,7 +124,7 @@ async function sendQuestion(m, conn, chat) {
     await conn.sendMessage(chat, {
       image: imageBuffer,
       mimetype: contentType,
-      caption: 'من هذا؟'
+      caption: ''
     }, { quoted: m });
 
     const answers = Array.isArray(rawAnswer) ? rawAnswer : [rawAnswer];
@@ -137,8 +149,8 @@ handler.all = async function(m) {
   if (m.isBaileys || !m.text) return;
   if (/^\.(مص|سص)$/i.test(m.text.trim())) return;
 
-  const userAnswer = normalizeAnswer(m.text);
-  if (!userAnswer || !state.answers.includes(userAnswer)) return;
+  const userAnswers = getAnswerCandidates(m.text);
+  if (!userAnswers.some(answer => state.answers.includes(answer))) return;
 
   state.locked = true;
   const elapsed = ((Date.now() - state.questionStartTime) / 1000).toFixed(2);
