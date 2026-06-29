@@ -1,4 +1,5 @@
 import { canLevelUp, xpRange } from '../lib/levelling.js';
+import { cleanAnswerText } from '../lib/answerCleaner.js';
 
 let handler = m => m;
 
@@ -96,7 +97,7 @@ function getRandomNames(count) {
 
 // Improved Arabic text normalization
 function normalizeArabicText(text) {
-    return text
+    return cleanAnswerText(text)
         .trim()
         .replace(/\s+/g, ' ') // Replace multiple spaces with single space
         .replace(/[ًٌٍَُِّْ]/g, '') // Remove Arabic diacritics
@@ -245,17 +246,18 @@ handler.all = async function(m, { conn }) {
             gameState.currentNames = []; // Clear the current names
             gameState.playerProgress = {}; // Clear player progress
             
-        } else if (gameState.active && gameState.currentNames.length > 0 && m.text && !m.text.startsWith('.')) {
+        } else if (gameState.active && gameState.currentNames.length > 0 && m.text) {
             // Only process non-command messages when game is active
             // Prevent single-letter words from being considered
-            if (m.text.trim().length <= 1) return;
+            const answerText = cleanAnswerText(m.text);
+            if (answerText.length <= 1) return;
             
             // Prevent spam - don't respond too frequently
             const now = Date.now();
             if (now - gameState.lastResponseTime < 1000) return; // 1 second cooldown
             
             const progress = checkUserProgress(
-                m.text,
+                answerText,
                 gameState.currentNames,
                 gameState.playerProgress,
                 m.sender

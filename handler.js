@@ -31,7 +31,36 @@ if (typeof global.startTime !== 'number') {
 //  commands from the same user.
 // -----------------------------------------------------------------------------
 const userRateLimitMap = new Map();
-const RATE_LIMIT_INTERVAL_MS = 5000; // 5‑second cool‑down (tweak as needed)
+const RATE_LIMIT_INTERVAL_MS = 5000;
+const userRateLimitReplyMap = new Map();
+const RATE_LIMIT_REPLY_INTERVAL_MS = 15000;
+
+const groupMetadataCache = new Map();
+const GROUP_METADATA_TTL_MS = 30_000;
+
+const fetchGroupMetadata = async (conn, chatId) => {
+  const cached = groupMetadataCache.get(chatId);
+  if (cached && Date.now() - cached.time < GROUP_METADATA_TTL_MS) {
+    return cached.data;
+  }
+  const data = await conn.groupMetadata(chatId).catch(() => null);
+  if (data) groupMetadataCache.set(chatId, { time: Date.now(), data });
+  return data;
+};
+
+const parseCommand = (text, prefix) => {
+  if (!text) return { usedPrefix: '', command: '', args: [], text: '' };
+  const str2Regex = (str) => str.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
+  const re = prefix instanceof RegExp
+    ? prefix
+    : new RegExp(str2Regex(String(prefix)));
+  const match = re.exec(text);
+  if (!match) return { usedPrefix: '', command: '', args: [], text };
+  const usedPrefix = match[0];
+  const noPrefix = text.slice(usedPrefix.length).trim();
+  const [command, ...args] = noPrefix.split` `.filter((v) => v);
+  return { usedPrefix, command: command || '', args: args || [], text: noPrefix };
+};
 
 const commandQueue = new Map();
 
@@ -306,7 +335,7 @@ export async function handler(chatUpdate) {
         let usedPrefix;
         let _user = global.db.data && global.db.data.users && global.db.data.users[m.sender];
 
-        const groupMetadata = (m.isGroup ? ((conn.chats[m.chat] || {}).metadata || await this.groupMetadata(m.chat).catch((_) => null)) : {}) || {};
+        const groupMetadata = (m.isGroup ? ((conn.chats[m.chat] || {}).metadata || await fetchGroupMetadata(this, m.chat)) : {}) || {};
         const participants = (m.isGroup ? groupMetadata.participants : []) || [];
         const user = (m.isGroup ? participants.find((u) => u.id === m.sender) : {}) || {};
         const bot = (m.isGroup ? participants.find((u) => u.id === this.user.jid) : {}) || {};
@@ -453,7 +482,11 @@ export async function handler(chatUpdate) {
                 const userId = m.sender;
                 const lastTime = userRateLimitMap.get(userId) || 0;
                 if (now - lastTime < RATE_LIMIT_INTERVAL_MS) {
-                    await m.reply('⚠️ Rate limit: wait before sending another command.');
+                    const lastReplyTime = userRateLimitReplyMap.get(userId) || 0;
+                    if (now - lastReplyTime > RATE_LIMIT_REPLY_INTERVAL_MS) {
+                        await m.reply('⚠️ Rate limit: wait before sending another command.');
+                        userRateLimitReplyMap.set(userId, now);
+                    }
                     continue;
                 }
                 userRateLimitMap.set(userId, now);
@@ -478,14 +511,13 @@ export async function handler(chatUpdate) {
                 
                 // Check if user is banned BEFORE processing any command
                 if (m.text && user && user.banned && !isROwner) {
-                    console.log(`Banned user ${m.sender} tried to use command: ${m.text}`);
-                    m.reply("🚫 *You are banned from using this bot.*");
+                    const now = Date.now();
+                    const lastBanReply = user.lastBanReplyTime || 0;
+                    if (now - lastBanReply > 20000) {
+                        await m.reply('🚫 أنت محظور من استخدام البوت.');
+                        user.lastBanReplyTime = now;
+                    }
                     continue;
-                }
-                
-                // Debug: Check if user exists and their ban status
-                if (m.text && user) {
-                    console.log(`User ${m.sender} ban status: ${user.banned}`);
                 }
                 
                 if (m.chat in global.db.data.chats || m.sender in global.db.data.users) {
@@ -498,21 +530,11 @@ export async function handler(chatUpdate) {
 
                     // Show ban message for banned chats (only for non-owner commands)
                     if (chat?.isBanned && !isROwner && !['banchat.js', 'unban.js', 'banstatus.js', 'owner-test.js', 'test-ban.js', 'owner-unbanchat.js', 'owner-exec.js', 'owner-exec2.js', 'tool-delete.js', 'gc-link.js', 'gc-hidetag.js', 'info-creator.js'].includes(name)) {
-                        const banMessage = `🚫 *CHAT BANNED!*
-
-⚠️ *This chat is currently banned from using bot commands.*
-
-📝 *Chat Info:*
-• *Chat ID:* ${m.chat}
-• *Chat Name:* ${m.isGroup ? m.chat.split('@')[0] : 'Private Chat'}
-• *Banned At:* ${new Date().toLocaleString()}
-
-🔓 *To unban this chat, contact a bot owner using:*
-• *.unbanchat* (if you're an owner)
-
-📞 *Contact:* wa.me/96176337375`;
-                        
-                        m.reply(banMessage);
+                        const now = Date.now();
+                        if (!chat.lastBanReplyTime || now - chat.lastBanReplyTime > 60000) {
+                            await m.reply('🚫 هذا الجروب محظور من استخدام الأوامر.');
+                            chat.lastBanReplyTime = now;
+                        }
                         return;
                     }
 
@@ -623,7 +645,7 @@ export async function handler(chatUpdate) {
                 };
                 const startTime = Date.now();
                 try {
-                    addToQueue(m, plugin, extra);
+                    await addToQueue(m, plugin, extra);
                 } catch (e) {
                     m.error = e;
                     console.error(`Error in plugin '${name}':`, e);

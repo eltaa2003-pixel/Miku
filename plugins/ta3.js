@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { cleanAnswerText } from '../lib/answerCleaner.js';
 
 // Time helpers
 const formatElapsed = (ms) => {
@@ -15,14 +16,31 @@ const updateTimeStats = (stats, jid, elapsedMs) => {
   if (elapsedMs < s.best) s.best = elapsedMs;
 };
 
-let gameState = {
-  active: false,
-  currentQuestion: '',
-  responses: {},
-  playerCorrectAnswers: {},
-  questionStartTime: 0,
-  answeredBy: [],
-  timeStats: {}
+let gameStates = {};
+
+const normalizeForMatching = (text) => {
+  if (typeof text !== 'string') return '';
+  return cleanAnswerText(text)
+    .toLowerCase()
+    .replace(/[جغق]/g, 'g')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+const getGameState = (m) => {
+  const chatId = m.chat || m.conn?.user?.id || 'global';
+  if (!gameStates[chatId]) {
+    gameStates[chatId] = {
+      active: false,
+      currentQuestion: '',
+      responses: {},
+      playerCorrectAnswers: {},
+      questionStartTime: 0,
+      answeredBy: [],
+      timeStats: {}
+    };
+  }
+  return gameStates[chatId];
 };
 
 // Helper function to remove duplicates from answer lists based on normalization
@@ -118,11 +136,31 @@ const defaultQuestions = [
 
 const processedDefaultQuestions = deduplicateAnswers(defaultQuestions);
 
+let questionsAndAnswers = [];
+let questionsDirty = false;
+let questionsWriteTimeout = null;
+
+const saveQuestions = () => {
+  try {
+    const cleanedData = deduplicateAnswers(questionsAndAnswers);
+    fs.writeFileSync(dataPath, JSON.stringify(cleanedData, null, 2));
+    questionsDirty = false;
+  } catch (error) {
+    console.error('Error saving ta3 questions:', error);
+  }
+};
+
+const scheduleQuestionsWrite = () => {
+  if (questionsWriteTimeout) clearTimeout(questionsWriteTimeout);
+  questionsWriteTimeout = setTimeout(() => {
+    if (questionsDirty) saveQuestions();
+  }, 5000);
+};
+
 const loadQuestions = () => {
   try {
     if (fs.existsSync(dataPath)) {
       const data = fs.readFileSync(dataPath, 'utf8');
-      // Always deduplicate loaded data to ensure consistency
       questionsAndAnswers = deduplicateAnswers(JSON.parse(data));
     } else {
       questionsAndAnswers = processedDefaultQuestions;
@@ -131,16 +169,6 @@ const loadQuestions = () => {
   } catch (error) {
     console.error('Error loading ta3 questions:', error);
     questionsAndAnswers = processedDefaultQuestions;
-  }
-};
-
-const saveQuestions = () => {
-  try {
-    // Before saving, ensure the data is clean
-    const cleanedData = deduplicateAnswers(questionsAndAnswers);
-    fs.writeFileSync(dataPath, JSON.stringify(cleanedData, null, 2));
-  } catch (error) {
-    console.error('Error saving ta3 questions:', error);
   }
 };
 
@@ -171,6 +199,7 @@ const extractPossibleAnswers = (text) => {
 };
 
 const addAnswer = async (m, newAnswer, conn) => {
+  const gameState = getGameState(m);
   if (!gameState.active || !gameState.currentQuestion) {
     return m.reply('لا توجد لعبة قيد التشغيل حالياً.');
   }
@@ -196,11 +225,14 @@ const addAnswer = async (m, newAnswer, conn) => {
   }
 
   questionsAndAnswers[questionIndex].answers.push(newAnswer.trim());
+  questionsDirty = true;
   saveQuestions();
+  scheduleQuestionsWrite();
   await m.reply(`تمت إضافة "${newAnswer.trim()}" بشكل دائم كإجابة صحيحة للسؤال الحالي: ${gameState.currentQuestion}`);
 };
 
 const removeAnswer = async (m, answerToRemove, conn) => {
+    const gameState = getGameState(m);
     const userIsAdmin = await isAdmin(m, conn);
     if (!userIsAdmin) {
         return m.reply('فقط المشرفون يمكنهم حذف الإجابات.');
@@ -225,7 +257,9 @@ const removeAnswer = async (m, answerToRemove, conn) => {
     if (answerIndex > -1) {
         const removedAnswer = questionsAndAnswers[questionIndex].answers[answerIndex];
         questionsAndAnswers[questionIndex].answers.splice(answerIndex, 1);
+        questionsDirty = true;
         saveQuestions();
+        scheduleQuestionsWrite();
         await m.reply(`تم حذف الإجابة "${removedAnswer}" بشكل دائم من السؤال الحالي.`);
     } else {
         await m.reply(`لم يتم العثور على الإجابة "${answerToRemove}" في السؤال الحالي.`);
@@ -265,7 +299,9 @@ const addQuestion = async (m, newQuestionData, conn) => {
     const deduplicatedNewAnswers = [...uniqueAnswers.values()];
 
     questionsAndAnswers.push({ question, answers: deduplicatedNewAnswers });
+    questionsDirty = true;
     saveQuestions();
+    scheduleQuestionsWrite();
     await m.reply(`تمت إضافة السؤال الجديد بشكل دائم:\n*السؤال:* ${question}\n*الإجابات:* ${deduplicatedNewAnswers.join(', ')}`);
 };
 
@@ -284,6 +320,7 @@ const listQuestions = async (m) => {
 };
 
 const skipQuestion = async (m) => {
+  const gameState = getGameState(m);
   if (!gameState.active || !gameState.currentQuestion) {
     return m.reply('لا توجد لعبة قيد التشغيل حالياً.');
   }
@@ -300,6 +337,7 @@ const skipQuestion = async (m) => {
 };
 
 const startGame = async (m) => {
+  const gameState = getGameState(m);
   if (gameState.active) {
     return m.reply('اللعبة قيد التشغيل بالفعل.');
   }
@@ -320,6 +358,7 @@ const startGame = async (m) => {
 };
 
 const stopGame = async (m) => {
+  const gameState = getGameState(m);
   if (!gameState.active) {
     return m.reply('لا توجد لعبة قيد التشغيل حالياً.');
   }
@@ -344,6 +383,7 @@ const stopGame = async (m) => {
 };
 
 const nextQuestion = async (m) => {
+  const gameState = getGameState(m);
   gameState.playerCorrectAnswers = {};
   gameState.answeredBy = [];
   
@@ -362,34 +402,26 @@ const nextQuestion = async (m) => {
 };
 
 const checkAnswer = async (m) => {
-  console.log('🔍 checkAnswer called for:', m.text);
-  
+  const gameState = getGameState(m);
   if (!gameState.active || !gameState.currentQuestion) {
-    console.log('❌ Game not active or no current question');
     return;
   }
   
   const userJid = m.sender;
   
   if (gameState.answeredBy.includes(userJid)) {
-    console.log('❌ User already answered:', userJid);
     return;
   }
   
   let qa = questionsAndAnswers.find(q => q.question === gameState.currentQuestion);
   if (!qa) {
-    console.log('❌ Question not found:', gameState.currentQuestion);
     return;
   }
   
   let correctAnswers = qa.answers;
   let normalizedCorrectAnswers = correctAnswers.map(answer => normalizeForMatching(answer));
   
-  console.log('📝 Correct answers:', correctAnswers);
-  console.log('📝 Normalized correct answers:', normalizedCorrectAnswers);
-  
   let userAnswers = extractPossibleAnswers(m.text);
-  console.log('👤 User answers extracted:', userAnswers);
   
   if (!gameState.playerCorrectAnswers[userJid]) {
     gameState.playerCorrectAnswers[userJid] = new Set();
@@ -398,19 +430,13 @@ const checkAnswer = async (m) => {
   userAnswers.forEach(answer => {
     if (normalizedCorrectAnswers.includes(answer)) {
       gameState.playerCorrectAnswers[userJid].add(answer);
-      console.log('✅ Correct answer found:', answer);
-    } else {
-      console.log('❌ Wrong answer:', answer);
     }
   });
   
   const correctCount = gameState.playerCorrectAnswers[userJid].size;
   const newCorrect = userAnswers.filter(answer => normalizedCorrectAnswers.includes(answer)).length;
   
-  console.log('🎯 Total correct answers for user:', correctCount);
-  
   if (correctCount >= 3 && !gameState.answeredBy.includes(userJid)) {
-    console.log('🎉 User got 3+ correct answers! Giving point...');
     gameState.answeredBy.push(userJid);
     if (!gameState.responses[userJid]) {
       gameState.responses[userJid] = 1;
@@ -429,12 +455,11 @@ const checkAnswer = async (m) => {
       nextQuestion(m);
     }, 1000);
   } else {
-    console.log('⏳ User needs more correct answers. Current:', correctCount);
   }
 };
 
 handler.all = async function(m, extra) {
-  // Debug logs removed to prevent terminal spam
+  const gameState = getGameState(m);
   
   if (/^\.متع$/i.test(m.text)) {
     // Debug logs removed to prevent terminal spam

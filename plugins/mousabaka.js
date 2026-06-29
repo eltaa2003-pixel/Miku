@@ -1,5 +1,7 @@
 import fs   from 'fs';
 import axios from 'axios';
+import { cleanAnswerText, isExactCommand } from '../lib/answerCleaner.js';
+import { prepareWhatsAppImage } from '../lib/whatsappImage.js';
 
 const DATA_PATH      = './plugins/game-data.json';
 const IMAGE_LIST_URL = 'https://raw.githubusercontent.com/eltaa2003-pixel/Miku/main/images.json';
@@ -155,9 +157,11 @@ function getComp(chatId) {
   return compStates[chatId] || null;
 }
 
-function createComp(chatId, targetScore) {
+function createComp(chatId, targetScore, options = {}) {
   const order = [...MODES].sort(() => Math.random() - 0.5);
   const botConfig = getBotConfig(chatId);
+  const botEnabled = typeof options.botEnabled === 'boolean' ? options.botEnabled : botConfig.enabled;
+  const botDifficulty = options.botDifficulty || botConfig.difficulty;
 
   compStates[chatId] = {
     active:          true,
@@ -174,8 +178,8 @@ function createComp(chatId, targetScore) {
     names:           null,
     image:           null,
     lastMsg:         {},
-    botEnabled:      false,
-    botDifficulty:   botConfig.difficulty,
+    botEnabled,
+    botDifficulty,
     botTimer:        null,
     timeStats:       {},
   };
@@ -337,7 +341,11 @@ async function postNextRound(comp, chatId, conn, m) {
         const [url, rawAnswer] = entries[Math.floor(Math.random() * entries.length)];
         const imgRes = await axios.get(url, { responseType: 'arraybuffer', timeout: 15000 });
         const contentType = imgRes.headers['content-type'] || 'image/jpeg';
+        if (!contentType.startsWith('image/')) {
+          throw new Error(`Not an image (${contentType}).`);
+        }
         const buffer = Buffer.from(imgRes.data);
+        const preparedImage = await prepareWhatsAppImage(buffer);
         comp.image = {
           answer:     Array.isArray(rawAnswer)
                         ? rawAnswer.map(a => a.toLowerCase())
@@ -345,8 +353,7 @@ async function postNextRound(comp, chatId, conn, m) {
           answeredBy: null,
         };
         const sent = await conn.sendMessage(chatId, {
-          image:    buffer,
-          mimetype: contentType,
+          ...preparedImage,
           caption:  '',
         });
         comp.roundStartTime = (sent.messageTimestamp || Date.now()) * 1000;
@@ -491,7 +498,7 @@ async function awardPoint(comp, chatId, conn, winnerJid, winnerMsg, winnerElapse
 
 async function checkSingle(comp, chatId, conn, m) {
   if (!comp.single || comp.single.answeredBy) return;
-  const userAnswers = extractPossibleAnswersFull(m.text);
+  const userAnswers = extractPossibleAnswersFull(cleanAnswerText(m.text));
   const matched     = userAnswers.find(ua => comp.single.answers.includes(ua));
   if (!matched) return;
 
@@ -505,7 +512,7 @@ async function checkSingle(comp, chatId, conn, m) {
 async function checkMulti(comp, chatId, conn, m) {
   if (!comp.multi || comp.multi.answeredBy) return;
   const jid         = m.sender;
-  const userAnswers = extractPossibleAnswers(m.text);
+  const userAnswers = extractPossibleAnswers(cleanAnswerText(m.text));
 
   if (!comp.multi.playerSets[jid]) comp.multi.playerSets[jid] = new Set();
   const playerSet = comp.multi.playerSets[jid];
@@ -539,7 +546,7 @@ async function checkMulti(comp, chatId, conn, m) {
 async function checkNames(comp, chatId, conn, m) {
   if (!comp.names || comp.names.answeredBy) return;
   const jid   = m.sender;
-  const input = m.text;
+  const input = cleanAnswerText(m.text);
 
   const { foundNewMatches, hasAllNames } = checkNamesProgress(
     input,
@@ -571,7 +578,7 @@ async function checkNames(comp, chatId, conn, m) {
 
 async function checkImage(comp, chatId, conn, m) {
   if (!comp.image || comp.image.answeredBy) return;
-  const userAnswer = m.text.trim().toLowerCase();
+  const userAnswer = normalizeForMatching(m.text);
   if (!comp.image.answer.includes(userAnswer)) return;
 
   const elapsed = (m.messageTimestamp * 1000) - comp.roundStartTime;
@@ -622,7 +629,33 @@ function checkNamesProgress(userInput, currentNames, playerProgress, playerId) {
 
 // ─── Start / Stop ─────────────────────────────────────────────────────────────
 
-async function startCompetition(m, conn, rawTarget) {
+function parseStartOptions(args = []) {
+  const difficultyAliases = {
+    سهل: 'easy',
+    easy: 'easy',
+    عادي: 'medium',
+    متوسط: 'medium',
+    medium: 'medium',
+    صعب: 'hard',
+    hard: 'hard',
+  };
+  let target = 10;
+  let botDifficulty = 'medium';
+
+  for (const arg of args) {
+    const cleaned = arabicToEnglish(String(arg || '').trim().toLowerCase());
+    const num = parseInt(cleaned, 10);
+    if (!isNaN(num) && num > 0) {
+      target = Math.min(num, 30);
+      continue;
+    }
+    if (difficultyAliases[cleaned]) botDifficulty = difficultyAliases[cleaned];
+  }
+
+  return { target, botDifficulty };
+}
+
+async function startCompetition(m, conn, args = [], options = {}) {
   const chatId = m.chat;
 
   if (getComp(chatId)) {
@@ -632,15 +665,15 @@ async function startCompetition(m, conn, rawTarget) {
     );
   }
 
-  let target = 10;
-  if (rawTarget) {
-    const num = parseInt(arabicToEnglish(rawTarget.trim()), 10);
-    if (!isNaN(num) && num > 0) target = Math.min(num, 30);
-  }
+  const { target, botDifficulty } = parseStartOptions(args);
 
-  const comp = createComp(chatId, target);
+  const comp = createComp(chatId, target, {
+    botEnabled: !!options.botEnabled,
+    botDifficulty,
+  });
 
-  await conn.sendMessage(chatId, { text: `🏆 *مسابقة!* ${target} فنش` });
+  const botText = comp.botEnabled ? `\n🤖 ضد يوت - ${botDifficulty}` : '';
+  await conn.sendMessage(chatId, { text: `🏆 *مسابقة!* ${target} فنش${botText}` });
 
   await delay(1000);
   await conn.sendMessage(chatId, { text: '3️⃣' });
@@ -707,7 +740,10 @@ let handler = async (m, { conn, command, args }) => {
   const chatId = m.chat;
   try {
     if (command === 'مسابقة') {
-      return await startCompetition(m, conn, args[0]);
+      return await startCompetition(m, conn, args);
+    }
+    if (command === 'مسابقة_بوت') {
+      return await startCompetition(m, conn, args, { botEnabled: true });
     }
     if (command === 'سمسابقة') {
       return await stopCompetition(m, conn);
@@ -718,8 +754,8 @@ let handler = async (m, { conn, command, args }) => {
   }
 };
 
-handler.command = ['مسابقة', 'سمسابقة'];
-handler.help    = ['مسابقة'];
+handler.command = ['مسابقة', 'مسابقة_بوت', 'سمسابقة'];
+handler.help    = ['مسابقة', 'مسابقة_بوت'];
 handler.tags    = ['game'];
 
 handler.all = async function (m) {
@@ -731,10 +767,12 @@ handler.all = async function (m) {
     const comp = getComp(chatId);
     if (!comp || !comp.active || comp.roundLocked) return !0;
 
-    if (!txt || txt.startsWith('.')) return !0;
-    if (isSpam(txt)) return !0;
-    if (isRapidDupe(comp, m.sender, txt)) return !0;
-    recordMsg(comp, m.sender, txt);
+    if (!txt || isExactCommand(txt, ['مسابقة', 'مسابقة_بوت', 'سمسابقة'])) return !0;
+    const answerText = cleanAnswerText(txt);
+    if (isSpam(answerText)) return !0;
+    if (isRapidDupe(comp, m.sender, answerText)) return !0;
+    recordMsg(comp, m.sender, answerText);
+    m.text = answerText;
 
     const mode = comp.roundMode;
     if      (mode === 'SINGLE') await checkSingle(comp, chatId, conn, m);

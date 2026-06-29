@@ -1,4 +1,5 @@
 import { canLevelUp, xpRange } from '../lib/levelling.js';
+import { cleanAnswerText, isExactCommand } from '../lib/answerCleaner.js';
 
 let handler = m => m;
 
@@ -50,7 +51,7 @@ let gameState = {
 const normalizeForMatching = (text) => {
   if (typeof text !== 'string') return '';
   // Treat ج, غ, and ق as the same character (g) for matching purposes
-  return text.trim().toLowerCase().replace(/[جغق]/g, 'g').replace(/\s+/g, ' ');
+  return cleanAnswerText(text).toLowerCase().replace(/[جغق]/g, 'g').replace(/\s+/g, ' ');
 };
 
 // This function removes duplicate answers from the lists
@@ -456,7 +457,7 @@ handler.all = async function(m) {
     if (m.text === ".سكيب") return skipQuestion(m);
     
     // Only process during active game
-    if (gameState.active) {
+    if (gameState.active && !isExactCommand(m.text, ['مس', 'سس', 'سكيب'])) {
         await checkAnswer(m);
         await checkForCorrections(m);
     }

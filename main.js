@@ -169,6 +169,7 @@ const sessionRefreshIntervalMs = Number(process.env.SESSION_REFRESH_INTERVAL_MS 
 
 
 const {state, saveState, saveCreds} = await useMultiFileAuthState(global.authFile);
+global.whatsappSendReady = false;
 
 const msgRetryCounterMap = (MessageRetryMap) => { };
 const {version} = await fetchLatestBaileysVersion();
@@ -511,17 +512,32 @@ const initializeSessionManagement = async () => {
   }
 };
 
+global.dbDirty = false;
+
+const scheduleDbWrite = () => {
+  if (global.dbWriteTimeout) clearTimeout(global.dbWriteTimeout);
+  if (!global.dbDirty) return;
+  global.dbDirty = false;
+  global.dbWriteTimeout = setTimeout(async () => {
+    if (global.stopped === 'close' || !conn?.user) return;
+    if (global.db.data) await global.db.write().catch(() => {});
+    if (opts['autocleartmp'] && (global.support || {}).find) {
+      const tmp = [tmpdir(), 'tmp', 'jadibts'];
+      tmp.forEach((filename) => spawn('find', [filename, '-amin', '3', '-type', 'f', '-delete']));
+    }
+  }, 15000);
+};
+
+global.markDbDirty = () => {
+  global.dbDirty = true;
+  scheduleDbWrite();
+};
+
 if (!opts['test']) {
   if (global.db) {
-    // Store interval references globally
-    global.dbInterval = setInterval(async () => {
-      if (global.stopped === 'close' || !conn?.user) return;
-      if (global.db.data) await global.db.write();
-      if (opts['autocleartmp'] && (global.support || {}).find) {
-        const tmp = [tmpdir(), 'tmp', 'jadibts'];
-        tmp.forEach((filename) => spawn('find', [filename, '-amin', '3', '-type', 'f', '-delete']));
-      }
-    }, 120 * 1000); // Increased from 60s to 120s to reduce I/O operations
+    global.markDbDirty();
+    process.on('SIGTERM', () => { if (global.db.data) global.db.write().catch(() => {}); });
+    process.on('SIGINT', () => { if (global.db.data) global.db.write().catch(() => {}); });
   }
 }
 
@@ -559,49 +575,15 @@ function clearTmp() {
 }
 
 function purgeSession() {
-  let prekey = []
-  let directorio = readdirSync("./MyninoSession")
-  let filesFolderPreKeys = directorio.filter(file => {
-    if (file.startsWith('pre-key-')) {
-      try {
-        const filePath = `./MyninoSession/${file}`;
-        const stats = statSync(filePath);
-        // Only delete pre-keys older than 24 hours
-        return (Date.now() - stats.mtimeMs) > (24 * 60 * 60 * 1000);
-      } catch (e) {
-        return false;
-      }
-    }
-    return false;
-  })
-  
-  filesFolderPreKeys.forEach(files => {
-    unlinkSync(`./MyninoSession/${files}`)
-    console.log(`Deleted old pre-key: ${files}`)
-  })
+  // WhatsApp auth files are encryption material. Deleting pre-keys while the
+  // bot is logged in can make recipients see "waiting for this message".
+  return;
 }
 
 function purgeSessionSB() {
-try {
-let listaDirectorios = readdirSync('./jadibts/');
-let SBprekey = []
-listaDirectorios.forEach(directorio => {
-if (statSync(`./jadibts/${directorio}`).isDirectory()) {
-let DSBPreKeys = readdirSync(`./jadibts/${directorio}`).filter(fileInDir => {
-return fileInDir.startsWith('pre-key-') /*|| fileInDir.startsWith('app-') || fileInDir.startsWith('session-')*/
-})
-SBprekey = [...SBprekey, ...DSBPreKeys]
-DSBPreKeys.forEach(fileInDir => {
-unlinkSync(`./jadibts/${directorio}/${fileInDir}`)
-})
+  // Preserve sub-bot encryption keys for the same reason as the main session.
+  return;
 }
-})
-if (SBprekey.length === 0) return;
-} catch (err) {
-if (!process.env.ELTA_CHILD_PROCESS) {
-console.log(chalk.bold.red(`=> Something went wrong during deletion, files not deleted`))
-}
-}}
 
 function purgeOldFiles() {
   const directories = ['./MyninoSession/', './jadibts/'];
@@ -647,8 +629,8 @@ function cleanupSession() {
     if (existsSync(sessionDir)) {
       const files = readdirSync(sessionDir);
       files.forEach(file => {
-        // Only delete temporary/cache files, keep ALL encryption keys
-        if (file.startsWith('app-state-') || file.startsWith('baileys_store_')) {
+        // Only delete cache files, keep ALL encryption and app-state keys.
+        if (file.startsWith('baileys_store_')) {
           const filePath = `${sessionDir}/${file}`;
           if (existsSync(filePath)) {
             unlinkSync(filePath);
@@ -691,9 +673,11 @@ async function connectionUpdate(update) {
 
   // Connection state debugging
   if (connection === 'connecting') {
+    global.whatsappSendReady = false;
     }
   
   if (connection === 'open') {
+    global.whatsappSendReady = false;
     global.reconnectAttempts = 0;
     global.startTime = Date.now();
     if (reconnectTimer) {
@@ -734,8 +718,9 @@ async function connectionUpdate(update) {
     
 
     setTimeout(() => {
+      global.whatsappSendReady = true;
       initializeSessionManagement();
-    }, 5000); // Wait 5 seconds after connection to ensure everything is ready
+    }, 8000); // Wait after connection so encryption/device sync can settle.
     
     // Log @lid detection info
     // Test @lid functionality
@@ -774,6 +759,7 @@ async function connectionUpdate(update) {
   }
 
   if (connection === 'close') {
+    global.whatsappSendReady = false;
     let reconnectAttempts = global.reconnectAttempts || 0;
     const MAX_RECONNECT_ATTEMPTS = 5;
     
@@ -825,8 +811,8 @@ function cleanup() {
       global.conn.ws.close();
     } catch (e) {}
   }
-  // Clear all intervals with existence checks
-  if (global.dbInterval) clearInterval(global.dbInterval);
+  if (global.dbWriteTimeout) clearTimeout(global.dbWriteTimeout);
+  if (global.db?.data) global.db.write().catch(() => {});
   if (global.cleanupInterval) clearInterval(global.cleanupInterval);
   if (global.purgeInterval) clearInterval(global.purgeInterval);
   if (global.purgeSBInterval) clearInterval(global.purgeSBInterval);
@@ -874,7 +860,8 @@ global.reloadHandler = async function(restatConn) {
       handler = Handler;
       }
   } catch (e) {
-    }
+    console.error('Error reloading handler:', e);
+  }
   
   if (restatConn) {
     const oldChats = global.conn.chats;
@@ -1007,15 +994,30 @@ async function filesInit() {
       global.plugins[filename] = module.default || module;
       } catch (e) {
       delete global.plugins[filename];
+      console.error(`Error loading plugin ${filename}:`, e);
     }
   }
   console.log(`Loaded ${pluginFiles.length} plugins`);
 }
 filesInit().then(() => {
+  validateStartup();
   console.log('Plugins initialized successfully');
 }).catch((error) => {
   console.error('Error initializing plugins:', error);
 });
+
+function validateStartup() {
+  const required = [
+    './MyninoSession',
+    './plugins/game-data.json',
+    './images.json',
+    './database.json',
+  ];
+  const missing = required.filter((p) => !existsSync(p));
+  if (missing.length) {
+    console.warn('Missing required files:', missing.join(', '));
+  }
+}
 
 global.reload = async (_ev, filename) => {
   if (pluginFilter(filename)) {

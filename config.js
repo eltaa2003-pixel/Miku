@@ -86,7 +86,7 @@ global.fgif = {
       seconds: '999999999',
       gifPlayback: 'true',
       caption: global.bottime,
-      jpegThumbnail: fs.readFileSync('./menu.jpg')
+      jpegThumbnail: menuImg
     }
   }
 };
