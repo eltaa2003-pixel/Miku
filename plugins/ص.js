@@ -115,6 +115,10 @@ async function sendQuestion(m, conn, chat) {
       }
     });
 
+    const expected = parseInt(imageResponse.headers['content-length'] || '0', 10);
+    const actual = imageResponse.data.byteLength;
+    console.log(`Image fetch: ${url} | expected=${expected} actual=${actual} match=${expected === actual}`);
+
     const contentType = imageResponse.headers['content-type'] || 'image/jpeg';
     if (!contentType.startsWith('image/')) {
       throw new Error(`Not an image (${contentType}).`);
